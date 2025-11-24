@@ -2,7 +2,7 @@
 
 OTEL Collector + AWS Managed Services를 활용한 통합 모니터링 솔루션
 
-## 🏗️ 아키텍처
+##  아키텍처
 
 ```
 Application → OTEL SDK → OTEL Collector → AWS Services
@@ -11,7 +11,7 @@ Application → OTEL SDK → OTEL Collector → AWS Services
                                         └→ X-Ray (트레이스)
 ```
 
-## 📁 프로젝트 구조
+##  프로젝트 구조
 
 ```
 Nebula-Monitoring/
@@ -29,7 +29,7 @@ Nebula-Monitoring/
     └── otel-collector/    # OTEL Collector Chart
 ```
 
-## 🚀 배포 가이드
+##  배포 가이드
 
 ### 1. AWS 리소스 배포 (Terraform)
 
@@ -70,7 +70,7 @@ kubectl get pods -n monitoring
 kubectl logs -n monitoring -l app.kubernetes.io/name=otel-collector
 ```
 
-## 📊 모니터링 대시보드 접속
+##  모니터링 대시보드 접속
 
 ### Amazon Managed Grafana
 1. AWS Console → Amazon Managed Grafana
@@ -91,7 +91,7 @@ fields @timestamp, @message
 2. Service Map 선택
 3. 시간 범위 설정
 
-## 🔧 설정 커스터마이징
+##  설정 커스터마이징
 
 ### OTEL Collector 설정 변경
 ```bash
@@ -114,7 +114,7 @@ cd terraform/environments/prod
 terraform init && terraform apply
 ```
 
-## 📝 주요 설정 파일
+##  주요 설정 파일
 
 ### Terraform Variables
 - `terraform/environments/{env}/variables.tf`: 환경별 변수
@@ -124,7 +124,7 @@ terraform init && terraform apply
 - `helm/otel-collector/values.yaml`: 기본 설정
 - `helm/otel-collector/values-{env}.yaml`: 환경별 오버라이드
 
-## 🔐 보안 고려사항
+##  보안 고려사항
 
 1. **IRSA (IAM Roles for Service Accounts)**
    - OTEL Collector는 IRSA를 통해 AWS 서비스 접근
@@ -138,7 +138,7 @@ terraform init && terraform apply
    - 전송 중: TLS 1.2+
    - 저장 시: AWS KMS 암호화
 
-## 💰 비용 최적화
+##  비용 최적화
 
 1. **샘플링 설정**
    ```yaml
@@ -162,7 +162,7 @@ terraform init && terraform apply
            metric_names: [".*_bucket", ".*_created"]
    ```
 
-## 🐛 트러블슈팅
+##  트러블슈팅
 
 ### OTEL Collector 로그 확인
 ```bash
@@ -182,7 +182,7 @@ kubectl exec -n monitoring deployment/otel-collector -- \
   -d 'query=up'
 ```
 
-## 📚 참고 문서
+##  참고 문서
 
 - [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/)
 - [Amazon Managed Prometheus](https://docs.aws.amazon.com/prometheus/)
