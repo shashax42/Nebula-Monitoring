@@ -162,6 +162,20 @@ terraform init && terraform apply
            metric_names: [".*_bucket", ".*_created"]
    ```
 
+## 🤖 Auto-Instrumentation (블로그 인사이트 적용)
+
+애플리케이션 코드 수정 없이 자동 계측하는 방법은 [Auto-Instrumentation 가이드](docs/AUTO_INSTRUMENTATION.md)를 참고하세요.
+
+### Quick Start
+```yaml
+# Deployment에 annotation 추가만 하면 자동 계측!
+metadata:
+  annotations:
+    instrumentation.opentelemetry.io/inject-java: "true"  # Java
+    instrumentation.opentelemetry.io/inject-python: "true"  # Python
+    instrumentation.opentelemetry.io/inject-nodejs: "true"  # Node.js
+```
+
 ##  트러블슈팅
 
 ### OTEL Collector 로그 확인

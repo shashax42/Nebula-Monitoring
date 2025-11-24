@@ -203,15 +203,15 @@ config:
     pipelines:
       metrics:
         receivers: [otlp, prometheus]
-        processors: [memory_limiter, batch, resource, filter]
+        processors: [memory_limiter, resource, filter, batch]
         exporters: [prometheusremotewrite, logging]
       traces:
         receivers: [otlp]
-        processors: [memory_limiter, batch, resource, attributes]
+        processors: [memory_limiter, resource, attributes, batch]
         exporters: [awsxray, logging]
       logs:
         receivers: [otlp]
-        processors: [memory_limiter, batch, resource]
+        processors: [memory_limiter, resource, batch]
         exporters: [awscloudwatchlogs, logging]
 
 # ServiceMonitor for Prometheus Operator (optional)
