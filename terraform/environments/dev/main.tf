@@ -106,3 +106,27 @@ output "application_log_group" {
   description = "CloudWatch Log Group for Applications"
   value       = aws_cloudwatch_log_group.application.name
 }
+
+# Amazon Managed Grafana
+module "amg" {
+  source = "../../modules/amg"
+  
+  workspace_name            = "nebula-${var.environment}"
+  workspace_description     = "Grafana workspace for Nebula monitoring - ${var.environment}"
+  authentication_providers  = ["AWS_SSO"]
+  data_sources             = ["PROMETHEUS", "CLOUDWATCH", "XRAY"]
+  notification_destinations = ["SNS"]
+  log_retention_days       = var.log_retention_days
+  
+  tags = local.common_tags
+}
+
+output "grafana_workspace_endpoint" {
+  description = "Grafana workspace endpoint URL"
+  value       = module.amg.workspace_endpoint
+}
+
+output "grafana_workspace_id" {
+  description = "Grafana workspace ID"
+  value       = module.amg.workspace_id
+}
