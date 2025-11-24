@@ -1,0 +1,29 @@
+# Development Environment Override Values
+environment: "dev"
+clusterName: "nebula-eks-dev"
+
+# Resource limits for dev (smaller)
+resources:
+  limits:
+    cpu: 500m
+    memory: 1Gi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+# Autoscaling for dev
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+
+# AWS Configuration (populated from Terraform outputs)
+aws:
+  cloudwatch:
+    logGroup: "/aws/eks/nebula-eks-dev/otel-collector"
+
+# Lower sampling for dev
+config:
+  processors:
+    probabilistic_sampler:
+      sampling_percentage: 50  # 50% sampling in dev
