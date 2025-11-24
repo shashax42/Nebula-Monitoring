@@ -1,0 +1,36 @@
+# Staging Environment Override Values
+environment: "staging"
+clusterName: "nebula-eks-staging"
+
+# Moderate resources for staging
+replicaCount: 2
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+  requests:
+    cpu: 200m
+    memory: 512Mi
+
+# Autoscaling for staging
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 75
+  targetMemoryUtilizationPercentage: 75
+
+# AWS Configuration (populated from Terraform outputs)
+aws:
+  cloudwatch:
+    logGroup: "/aws/eks/nebula-eks-staging/otel-collector"
+
+# Moderate sampling for staging
+config:
+  processors:
+    probabilistic_sampler:
+      sampling_percentage: 25  # 25% sampling in staging
+    batch:
+      timeout: 7s
+      send_batch_size: 1536
