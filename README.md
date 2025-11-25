@@ -174,9 +174,9 @@ terraform init && terraform apply
 
 자세한 내용은 [X-Ray Service Map 가이드](docs/XRAY_SERVICE_MAP_GUIDE.md)를 참고하세요.
 
-## 🤖 Auto-Instrumentation (블로그 인사이트 적용)
+## Auto-Instrumentation
 
-애플리케이션 코드 수정 없이 자동 계측하는 방법은 [Auto-Instrumentation 가이드](docs/AUTO_INSTRUMENTATION.md)를 참고하세요.
+애플리케이션 코드 수정 없이 자동 계측하는 방법 [Auto-Instrumentation 가이드](docs/AUTO_INSTRUMENTATION.md)를 참고하세요.
 
 ### Quick Start
 ```yaml
