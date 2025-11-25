@@ -162,7 +162,7 @@ terraform init && terraform apply
            metric_names: [".*_bucket", ".*_created"]
    ```
 
-## 🗺️ X-Ray Service Map
+## X-Ray Service Map
 
 마이크로서비스 간 의존성과 성능을 시각화합니다.
 
