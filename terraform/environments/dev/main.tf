@@ -130,3 +130,36 @@ output "grafana_workspace_id" {
   description = "Grafana workspace ID"
   value       = module.amg.workspace_id
 }
+
+# CloudWatch Alarms
+module "cloudwatch_alarms" {
+  source = "../../modules/cloudwatch-alarms"
+  
+  environment  = var.environment
+  cluster_name = var.cluster_name
+  
+  # SNS Configuration
+  email_endpoints = ["ops-team@nebula.com"]  # 실제 이메일로 변경 필요
+  
+  # Application SLO Thresholds
+  error_rate_threshold   = 5      # 5% error rate
+  latency_p95_threshold  = 1000   # 1 second
+  availability_threshold = 99.9   # 99.9% availability
+  
+  # Infrastructure Thresholds
+  cpu_threshold         = 80
+  memory_threshold      = 80
+  pod_restart_threshold = 5
+  
+  tags = local.common_tags
+}
+
+output "alarm_sns_topic" {
+  description = "SNS topic ARN for alarms"
+  value       = module.cloudwatch_alarms.sns_topic_arn
+}
+
+output "critical_alarms" {
+  description = "List of critical alarm ARNs"
+  value       = module.cloudwatch_alarms.critical_alarms
+}
