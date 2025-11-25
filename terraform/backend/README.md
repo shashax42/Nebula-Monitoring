@@ -2,7 +2,7 @@
 
 이 모듈은 Terraform state 관리를 위한 S3 bucket과 DynamoDB table을 생성합니다.
 
-## 🚀 사용법
+## 사용법
 
 ### 1. Backend 리소스 생성 (최초 1회)
 
@@ -42,7 +42,7 @@ terraform {
 }
 ```
 
-## 📝 주의사항
+## 주의사항
 
 1. **이 모듈은 로컬 state를 사용합니다**
    - Backend 자체는 remote state를 사용할 수 없음 (순환 참조)
@@ -56,7 +56,7 @@ terraform {
    - S3 bucket과 DynamoDB table에 대한 IAM 권한 필요
    - 최소 권한 원칙 적용
 
-## 🔐 필요 IAM 권한
+## 필요 IAM 권한
 
 ```json
 {
