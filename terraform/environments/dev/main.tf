@@ -163,3 +163,43 @@ output "critical_alarms" {
   description = "List of critical alarm ARNs"
   value       = module.cloudwatch_alarms.critical_alarms
 }
+
+# X-Ray Service Map Configuration
+module "xray" {
+  source = "../../modules/xray"
+  
+  environment = var.environment
+  
+  # Sampling configuration
+  default_fixed_rate      = 0.1  # 10% for dev
+  critical_services       = ["api", "auth", "payment"]
+  critical_service_sampling_rate = 0.5  # 50% for critical services
+  
+  # Microservices to track
+  microservices = [
+    "api-gateway",
+    "auth-service",
+    "user-service",
+    "payment-service",
+    "notification-service",
+    "inventory-service"
+  ]
+  
+  # Performance thresholds
+  latency_threshold_seconds = 3
+  
+  # X-Ray Insights
+  enable_insights_notifications = true
+  
+  tags = local.common_tags
+}
+
+output "xray_service_map_url" {
+  description = "X-Ray Service Map URL"
+  value       = module.xray.service_map_url
+}
+
+output "xray_traces_url" {
+  description = "X-Ray Traces URL"
+  value       = module.xray.traces_url
+}

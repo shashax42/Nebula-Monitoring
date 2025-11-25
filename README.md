@@ -162,6 +162,18 @@ terraform init && terraform apply
            metric_names: [".*_bucket", ".*_created"]
    ```
 
+## 🗺️ X-Ray Service Map
+
+마이크로서비스 간 의존성과 성능을 시각화합니다.
+
+### 주요 기능
+- **서비스 의존성 맵**: 호출 관계 시각화
+- **성능 분석**: P50/P90/P95/P99 레이턴시
+- **오류 추적**: 오류 발생 지점 파악
+- **트레이스 분석**: 상세 호출 체인 확인
+
+자세한 내용은 [X-Ray Service Map 가이드](docs/XRAY_SERVICE_MAP_GUIDE.md)를 참고하세요.
+
 ## 🤖 Auto-Instrumentation (블로그 인사이트 적용)
 
 애플리케이션 코드 수정 없이 자동 계측하는 방법은 [Auto-Instrumentation 가이드](docs/AUTO_INSTRUMENTATION.md)를 참고하세요.
