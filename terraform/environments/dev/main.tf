@@ -118,7 +118,7 @@ module "amg" {
   
   workspace_name            = "nebula-${var.environment}"
   workspace_description     = "Grafana workspace for Nebula monitoring - ${var.environment}"
-  authentication_providers  = ["AWS_SSO"]
+  authentication_providers  = ["SAML"]
   data_sources             = ["PROMETHEUS", "CLOUDWATCH", "XRAY"]
   notification_destinations = ["SNS"]
   log_retention_days       = var.log_retention_days
