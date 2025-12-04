@@ -9,17 +9,20 @@ terraform {
   }
   
   # Backend configuration for state management
-  backend "s3" {
-    bucket         = "nebula-terraform-state"
-    key            = "monitoring/dev/terraform.tfstate"
-    region         = "ap-northeast-2"
-    dynamodb_table = "nebula-terraform-locks"
-    encrypt        = true
-  }
+  # TODO: S3 버킷 권한 설정 후 주석 해제
+  # backend "s3" {
+  #   bucket         = "nebula-terraform-state"
+  #   key            = "monitoring/dev/terraform.tfstate"
+  #   region         = "us-east-1"
+  #   dynamodb_table = "nebula-terraform-locks"
+  #   encrypt        = true
+  #   profile        = "monitoring-admin"
+  # }
 }
 
 provider "aws" {
-  region = var.region
+  region  = var.region
+  profile = "monitoring-admin"
   
   default_tags {
     tags = local.common_tags
@@ -45,16 +48,17 @@ module "amp" {
 }
 
 # IAM IRSA for OTEL Collector
-module "otel_collector_irsa" {
-  source = "../../modules/iam-irsa"
-  
-  cluster_name      = var.cluster_name
-  namespace         = var.otel_namespace
-  service_account   = var.otel_service_account
-  region           = var.region
-  amp_workspace_arn = module.amp.workspace_arn
-  tags             = local.common_tags
-}
+# TODO: EKS 클러스터 생성 후 또는 EKS 권한 추가 후 주석 해제
+# module "otel_collector_irsa" {
+#   source = "../../modules/iam-irsa"
+#   
+#   cluster_name      = var.cluster_name
+#   namespace         = var.otel_namespace
+#   service_account   = var.otel_service_account
+#   region           = var.region
+#   amp_workspace_arn = module.amp.workspace_arn
+#   tags             = local.common_tags
+# }
 
 # CloudWatch Log Groups
 resource "aws_cloudwatch_log_group" "otel_collector" {
@@ -87,15 +91,16 @@ output "amp_remote_write_url" {
   value       = module.amp.remote_write_url
 }
 
-output "otel_collector_role_arn" {
-  description = "IAM Role ARN for OTEL Collector"
-  value       = module.otel_collector_irsa.role_arn
-}
+# TODO: IRSA 모듈 활성화 후 주석 해제
+# output "otel_collector_role_arn" {
+#   description = "IAM Role ARN for OTEL Collector"
+#   value       = module.otel_collector_irsa.role_arn
+# }
 
-output "service_account_annotations" {
-  description = "Service Account annotations for IRSA"
-  value       = module.otel_collector_irsa.service_account_annotations
-}
+# output "service_account_annotations" {
+#   description = "Service Account annotations for IRSA"
+#   value       = module.otel_collector_irsa.service_account_annotations
+# }
 
 output "otel_collector_log_group" {
   description = "CloudWatch Log Group for OTEL Collector"
@@ -108,28 +113,29 @@ output "application_log_group" {
 }
 
 # Amazon Managed Grafana
-module "amg" {
-  source = "../../modules/amg"
-  
-  workspace_name            = "nebula-${var.environment}"
-  workspace_description     = "Grafana workspace for Nebula monitoring - ${var.environment}"
-  authentication_providers  = ["AWS_SSO"]
-  data_sources             = ["PROMETHEUS", "CLOUDWATCH", "XRAY"]
-  notification_destinations = ["SNS"]
-  log_retention_days       = var.log_retention_days
-  
-  tags = local.common_tags
-}
+# TODO: monitoring-admin에 grafana:TagResource 권한 추가 후 주석 해제
+# module "amg" {
+#   source = "../../modules/amg"
+#   
+#   workspace_name            = "nebula-${var.environment}"
+#   workspace_description     = "Grafana workspace for Nebula monitoring - ${var.environment}"
+#   authentication_providers  = ["AWS_SSO"]
+#   data_sources             = ["PROMETHEUS", "CLOUDWATCH", "XRAY"]
+#   notification_destinations = ["SNS"]
+#   log_retention_days       = var.log_retention_days
+#   
+#   tags = local.common_tags
+# }
 
-output "grafana_workspace_endpoint" {
-  description = "Grafana workspace endpoint URL"
-  value       = module.amg.workspace_endpoint
-}
+# output "grafana_workspace_endpoint" {
+#   description = "Grafana workspace endpoint URL"
+#   value       = module.amg.workspace_endpoint
+# }
 
-output "grafana_workspace_id" {
-  description = "Grafana workspace ID"
-  value       = module.amg.workspace_id
-}
+# output "grafana_workspace_id" {
+#   description = "Grafana workspace ID"
+#   value       = module.amg.workspace_id
+# }
 
 # CloudWatch Alarms
 module "cloudwatch_alarms" {
