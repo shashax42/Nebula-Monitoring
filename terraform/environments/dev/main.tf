@@ -113,29 +113,28 @@ output "application_log_group" {
 }
 
 # Amazon Managed Grafana
-# TODO: monitoring-admin에 grafana:TagResource 권한 추가 후 주석 해제
-# module "amg" {
-#   source = "../../modules/amg"
-#   
-#   workspace_name            = "nebula-${var.environment}"
-#   workspace_description     = "Grafana workspace for Nebula monitoring - ${var.environment}"
-#   authentication_providers  = ["AWS_SSO"]
-#   data_sources             = ["PROMETHEUS", "CLOUDWATCH", "XRAY"]
-#   notification_destinations = ["SNS"]
-#   log_retention_days       = var.log_retention_days
-#   
-#   tags = local.common_tags
-# }
+module "amg" {
+  source = "../../modules/amg"
+  
+  workspace_name            = "nebula-${var.environment}"
+  workspace_description     = "Grafana workspace for Nebula monitoring - ${var.environment}"
+  authentication_providers  = ["AWS_SSO"]
+  data_sources             = ["PROMETHEUS", "CLOUDWATCH", "XRAY"]
+  notification_destinations = ["SNS"]
+  log_retention_days       = var.log_retention_days
+  
+  tags = local.common_tags
+}
 
-# output "grafana_workspace_endpoint" {
-#   description = "Grafana workspace endpoint URL"
-#   value       = module.amg.workspace_endpoint
-# }
+output "grafana_workspace_endpoint" {
+  description = "Grafana workspace endpoint URL"
+  value       = module.amg.workspace_endpoint
+}
 
-# output "grafana_workspace_id" {
-#   description = "Grafana workspace ID"
-#   value       = module.amg.workspace_id
-# }
+output "grafana_workspace_id" {
+  description = "Grafana workspace ID"
+  value       = module.amg.workspace_id
+}
 
 # CloudWatch Alarms
 module "cloudwatch_alarms" {
