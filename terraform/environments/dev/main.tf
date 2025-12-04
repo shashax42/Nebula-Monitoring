@@ -144,7 +144,7 @@ module "cloudwatch_alarms" {
   cluster_name = var.cluster_name
   
   # SNS Configuration
-  email_endpoints = ["ops-team@nebula.com"]  # 실제 이메일로 변경 필요
+  email_endpoints = ["shinsia1649@gmail.com"] 
   
   # Application SLO Thresholds
   error_rate_threshold   = 5      # 5% error rate
