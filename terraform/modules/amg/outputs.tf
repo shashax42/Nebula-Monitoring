@@ -18,10 +18,7 @@ output "workspace_grafana_version" {
   value       = aws_grafana_workspace.main.grafana_version
 }
 
-output "workspace_status" {
-  description = "Status of the Grafana workspace"
-  value       = aws_grafana_workspace.main.status
-}
+# Note: status attribute is not exported by aws_grafana_workspace
 
 output "iam_role_arn" {
   description = "ARN of the IAM role for Grafana"

@@ -123,20 +123,8 @@ resource "aws_grafana_workspace" "main" {
   notification_destinations = var.notification_destinations
   
   # Organization role mapping (for SAML/SSO)
-  dynamic "configuration" {
-    for_each = var.enable_sso ? [1] : []
-    content {
-      plugins = jsonencode({
-        # Enable useful plugins
-        plugins = [
-          "grafana-piechart-panel",
-          "grafana-worldmap-panel",
-          "grafana-clock-panel",
-          "grafana-simple-json-datasource"
-        ]
-      })
-    }
-  }
+  # Note: configuration block is not supported in aws_grafana_workspace
+  # Plugins are managed separately via Grafana API
   
   # VPC configuration for private access
   dynamic "vpc_configuration" {
@@ -167,22 +155,11 @@ resource "aws_grafana_workspace_api_key" "main" {
 resource "aws_grafana_workspace_saml_configuration" "main" {
   count = var.saml_configuration != null ? 1 : 0
 
-  workspace_id = aws_grafana_workspace.main.id
+  workspace_id       = aws_grafana_workspace.main.id
   editor_role_values = var.saml_configuration.editor_role_values
   admin_role_values  = var.saml_configuration.admin_role_values
   
-  idp_metadata {
-    url = var.saml_configuration.idp_metadata_url
-    xml = var.saml_configuration.idp_metadata_xml
-  }
-  
-  login_assertion_attributes {
-    email = var.saml_configuration.email_assertion
-    name  = var.saml_configuration.name_assertion
-    login = var.saml_configuration.login_assertion
-    role  = var.saml_configuration.role_assertion
-    org   = var.saml_configuration.org_assertion
-  }
+  idp_metadata_url = var.saml_configuration.idp_metadata_url
 }
 
 # CloudWatch Log Group for Grafana audit logs

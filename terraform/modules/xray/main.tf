@@ -16,7 +16,7 @@ terraform {
 # Default sampling rule
 resource "aws_xray_sampling_rule" "default" {
   rule_name      = "${var.environment}-default"
-  priority       = 10000
+  priority       = 9999
   version        = 1
   reservoir_size = var.default_reservoir_size
   fixed_rate     = var.default_fixed_rate

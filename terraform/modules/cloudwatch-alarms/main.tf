@@ -76,18 +76,14 @@ resource "aws_cloudwatch_metric_alarm" "high_latency_p95" {
     return_data = true
     
     metric {
-      stat = "p95"
+      namespace   = "Nebula/Application"
+      metric_name = "RequestDuration"
+      stat        = "p95"
+      period      = var.metric_period
       
-      metric {
-        namespace   = "Nebula/Application"
-        metric_name = "RequestDuration"
-        
-        dimensions = {
-          Environment = var.environment
-        }
+      dimensions = {
+        Environment = var.environment
       }
-      
-      period = var.metric_period
     }
   }
   
@@ -119,18 +115,14 @@ resource "aws_cloudwatch_metric_alarm" "low_availability" {
     id = "errors"
     
     metric {
-      stat = "Sum"
+      namespace   = "Nebula/Application"
+      metric_name = "Errors"
+      stat        = "Sum"
+      period      = var.metric_period
       
-      metric {
-        namespace   = "Nebula/Application"
-        metric_name = "Errors"
-        
-        dimensions = {
-          Environment = var.environment
-        }
+      dimensions = {
+        Environment = var.environment
       }
-      
-      period = var.metric_period
     }
   }
   
@@ -138,18 +130,14 @@ resource "aws_cloudwatch_metric_alarm" "low_availability" {
     id = "requests"
     
     metric {
-      stat = "Sum"
+      namespace   = "Nebula/Application"
+      metric_name = "Requests"
+      stat        = "Sum"
+      period      = var.metric_period
       
-      metric {
-        namespace   = "Nebula/Application"
-        metric_name = "Requests"
-        
-        dimensions = {
-          Environment = var.environment
-        }
+      dimensions = {
+        Environment = var.environment
       }
-      
-      period = var.metric_period
     }
   }
   
