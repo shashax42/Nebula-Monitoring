@@ -14,7 +14,7 @@
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
       "id": 100,
       "panels": [],
-      "title": "🏥 Q1. 클러스터 건강 상태",
+      "title": "Q1. 클러스터 건강 상태",
       "type": "row"
     },
     {
@@ -182,7 +182,7 @@
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
       "id": 101,
       "panels": [],
-      "title": "🔥 Q2. 서비스 에러율",
+      "title": "Q2. 서비스 에러율",
       "type": "row"
     },
     {
@@ -243,7 +243,7 @@
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 },
       "id": 102,
       "panels": [],
-      "title": "⏱️ Q3. 응답 시간 (Latency)",
+      "title": "Q3. 응답 시간 (Latency)",
       "type": "row"
     },
     {
@@ -328,7 +328,7 @@
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 39 },
       "id": 103,
       "panels": [],
-      "title": "💰 Q4. 리소스 사용률 (비용 최적화)",
+      "title": "Q4. 리소스 사용률 (비용 최적화)",
       "type": "row"
     },
     {
@@ -406,7 +406,7 @@
           "refId": "A"
         }
       ],
-      "title": "🔵 과소 사용 파드 (CPU < 10%) - 다운사이징 후보",
+      "title": "과소 사용 파드 (CPU < 10%) - 다운사이징 후보",
       "transformations": [
         { "id": "organize", "options": { "excludeByName": { "Time": true }, "indexByName": {}, "renameByName": { "Value": "CPU Usage", "namespace": "Namespace", "pod": "Pod" } } }
       ],
@@ -435,7 +435,7 @@
           "refId": "A"
         }
       ],
-      "title": "🔴 과부하 파드 (CPU > 80%) - 스케일업 후보",
+      "title": "과부하 파드 (CPU > 80%) - 스케일업 후보",
       "transformations": [
         { "id": "organize", "options": { "excludeByName": { "Time": true }, "indexByName": {}, "renameByName": { "Value": "CPU Usage", "namespace": "Namespace", "pod": "Pod" } } }
       ],
