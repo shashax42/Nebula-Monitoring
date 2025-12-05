@@ -4,8 +4,12 @@ tfplan
 *.tfstate
 *.tfstate.*
 .terraform/
-.terraform.lock.hcl
 crash.log
+
+# External repos (참고용 복사본 - 커밋 금지)
+terraform_new_extracted/
+terraform_new/
+*.zip
 
 # IDE
 .idea/
