@@ -1,0 +1,296 @@
+# ========================================
+# OTEL Collector Helm Values
+# terraform_new 인프라 모니터링용
+# ========================================
+
+# Terraform outputs에서 주입될 값들:
+# - serviceAccount.annotations.eks.amazonaws.com/role-arn: ${target_otel_role_arn}
+# - config.exporters.prometheusremotewrite.endpoint: ${amp_remote_write_url}
+# - config.exporters.awscloudwatchlogs.log_group_name: ${target_log_group}
+# - config.exporters.awsxray.region: ${aws_region}
+
+mode: daemonset  # 모든 노드에서 메트릭/로그 수집
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+  tag: 0.97.0
+
+serviceAccount:
+  create: true
+  name: otel-collector
+  annotations:
+    # Terraform에서 주입: eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT:role/..."
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 200m
+    memory: 256Mi
+
+config:
+  receivers:
+    # ========================================
+    # Prometheus 메트릭 수집
+    # ========================================
+    prometheus:
+      config:
+        scrape_configs:
+          # Kubernetes API Server
+          - job_name: 'kubernetes-apiservers'
+            kubernetes_sd_configs:
+              - role: endpoints
+            scheme: https
+            tls_config:
+              ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+                action: keep
+                regex: default;kubernetes;https
+
+          # Kubernetes Nodes (kubelet)
+          - job_name: 'kubernetes-nodes'
+            kubernetes_sd_configs:
+              - role: node
+            scheme: https
+            tls_config:
+              ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+            relabel_configs:
+              - action: labelmap
+                regex: __meta_kubernetes_node_label_(.+)
+              - target_label: __address__
+                replacement: kubernetes.default.svc:443
+              - source_labels: [__meta_kubernetes_node_name]
+                regex: (.+)
+                target_label: __metrics_path__
+                replacement: /api/v1/nodes/${1}/proxy/metrics
+
+          # Kubernetes cAdvisor (컨테이너 메트릭)
+          - job_name: 'kubernetes-cadvisor'
+            kubernetes_sd_configs:
+              - role: node
+            scheme: https
+            tls_config:
+              ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+            relabel_configs:
+              - action: labelmap
+                regex: __meta_kubernetes_node_label_(.+)
+              - target_label: __address__
+                replacement: kubernetes.default.svc:443
+              - source_labels: [__meta_kubernetes_node_name]
+                regex: (.+)
+                target_label: __metrics_path__
+                replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+
+          # Kubernetes Pods (애플리케이션 메트릭)
+          - job_name: 'kubernetes-pods'
+            kubernetes_sd_configs:
+              - role: pod
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+                action: keep
+                regex: true
+              - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+                action: replace
+                target_label: __metrics_path__
+                regex: (.+)
+              - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+                action: replace
+                regex: ([^:]+)(?::\d+)?;(\d+)
+                replacement: $1:$2
+                target_label: __address__
+              - action: labelmap
+                regex: __meta_kubernetes_pod_label_(.+)
+              - source_labels: [__meta_kubernetes_namespace]
+                target_label: kubernetes_namespace
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: kubernetes_pod_name
+
+    # ========================================
+    # AWS Container Insights Receiver
+    # ========================================
+    awscontainerinsightreceiver:
+      collection_interval: 60s
+      container_orchestrator: eks
+      add_service_as_attribute: true
+      prefer_full_pod_name: false
+
+    # ========================================
+    # OTLP Receiver (애플리케이션 트레이스)
+    # ========================================
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+    # ========================================
+    # Host Metrics (노드 레벨)
+    # ========================================
+    hostmetrics:
+      collection_interval: 30s
+      scrapers:
+        cpu: {}
+        disk: {}
+        filesystem: {}
+        load: {}
+        memory: {}
+        network: {}
+        paging: {}
+
+  processors:
+    # ========================================
+    # Batch Processor
+    # ========================================
+    batch:
+      timeout: 10s
+      send_batch_size: 1024
+
+    # ========================================
+    # Resource Detection (AWS 메타데이터)
+    # ========================================
+    resourcedetection:
+      detectors: [env, ec2, eks]
+      timeout: 5s
+      override: false
+
+    # ========================================
+    # Memory Limiter
+    # ========================================
+    memory_limiter:
+      check_interval: 1s
+      limit_mib: 512
+      spike_limit_mib: 128
+
+    # ========================================
+    # Attributes Processor (레이블 추가)
+    # ========================================
+    attributes:
+      actions:
+        - key: environment
+          value: dev
+          action: insert
+        - key: source
+          value: terraform-new-infrastructure
+          action: insert
+
+  exporters:
+    # ========================================
+    # Prometheus Remote Write (AMP)
+    # ========================================
+    prometheusremotewrite:
+      # Terraform에서 주입: endpoint: "https://aps-workspaces.ap-northeast-2.amazonaws.com/workspaces/ws-xxx/api/v1/remote_write"
+      auth:
+        authenticator: sigv4auth
+
+    # ========================================
+    # CloudWatch Logs
+    # ========================================
+    awscloudwatchlogs:
+      # Terraform에서 주입: log_group_name, region
+      log_stream_name: otel-collector
+
+    # ========================================
+    # AWS X-Ray
+    # ========================================
+    awsxray:
+      # Terraform에서 주입: region
+
+    # ========================================
+    # CloudWatch EMF (Container Insights)
+    # ========================================
+    awsemf:
+      namespace: ContainerInsights
+      # Terraform에서 주입: log_group_name, region
+      log_stream_name: performance
+      dimension_rollup_option: NoDimensionRollup
+      parse_json_encoded_attr_values: ["Sources", "kubernetes"]
+
+    # ========================================
+    # Logging (디버깅용)
+    # ========================================
+    logging:
+      loglevel: info
+
+  extensions:
+    # ========================================
+    # SigV4 Auth (AMP 인증)
+    # ========================================
+    sigv4auth:
+      # Terraform에서 주입: region
+      service: aps
+
+    # ========================================
+    # Health Check
+    # ========================================
+    health_check:
+      endpoint: :13133
+
+  service:
+    extensions: [sigv4auth, health_check]
+    
+    pipelines:
+      # ========================================
+      # 메트릭 파이프라인
+      # ========================================
+      metrics:
+        receivers: [prometheus, awscontainerinsightreceiver, hostmetrics]
+        processors: [memory_limiter, resourcedetection, attributes, batch]
+        exporters: [prometheusremotewrite, awsemf, logging]
+
+      # ========================================
+      # 트레이스 파이프라인
+      # ========================================
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, resourcedetection, attributes, batch]
+        exporters: [awsxray, logging]
+
+      # ========================================
+      # 로그 파이프라인
+      # ========================================
+      logs:
+        receivers: [otlp]
+        processors: [memory_limiter, resourcedetection, attributes, batch]
+        exporters: [awscloudwatchlogs, logging]
+
+# ========================================
+# Service Ports
+# ========================================
+ports:
+  prometheus:
+    enabled: true
+    containerPort: 8888
+    servicePort: 8888
+    protocol: TCP
+  otlp:
+    enabled: true
+    containerPort: 4317
+    servicePort: 4317
+    protocol: TCP
+  otlp-http:
+    enabled: true
+    containerPort: 4318
+    servicePort: 4318
+    protocol: TCP
+  health:
+    enabled: true
+    containerPort: 13133
+    servicePort: 13133
+    protocol: TCP
+
+# ========================================
+# Tolerations (모든 노드에 배포)
+# ========================================
+tolerations:
+  - operator: Exists
+
+# ========================================
+# Priority Class
+# ========================================
+priorityClassName: system-node-critical
