@@ -9,9 +9,9 @@ data "terraform_remote_state" "target_infra" {
   backend = "s3"
   
   config = {
-    bucket  = "nebula-terraform-state"
-    key     = "nebula-platform/dev/terraform.tfstate"  # terraform_new의 state 경로
-    region  = "ap-northeast-2"
+    bucket  = "lucia-real-buckets"  # terraform_new의 실제 버킷
+    key     = "env/dev/terraform.tfstate"  # terraform_new의 실제 state 경로
+    region  = "ap-northeast-2"  # terraform_new backend 리전
     profile = "monitoring-admin"
   }
 }
