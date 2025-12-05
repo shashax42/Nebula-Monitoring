@@ -1,0 +1,49 @@
+# OTEL Collector가 Kubernetes 리소스를 읽을 수 있도록 RBAC 설정
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: otel-collector-role
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/proxy
+      - nodes/metrics
+      - services
+      - endpoints
+      - pods
+      - configmaps
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources:
+      - namespaces
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources:
+      - replicasets
+      - deployments
+      - daemonsets
+      - statefulsets
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs:
+      - /metrics
+      - /metrics/cadvisor
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: otel-collector-role-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: otel-collector-role
+subjects:
+  - kind: ServiceAccount
+    name: otel-collector
+    namespace: monitoring

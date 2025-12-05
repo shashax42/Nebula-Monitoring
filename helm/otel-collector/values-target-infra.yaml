@@ -9,7 +9,8 @@
 # - config.exporters.awscloudwatchlogs.log_group_name: ${target_log_group}
 # - config.exporters.awsxray.region: ${aws_region}
 
-mode: daemonset  # 모든 노드에서 메트릭/로그 수집
+mode: deployment  # 단일 Pod로 배포 (포트 충돌 방지)
+replicaCount: 1
 
 image:
   repository: otel/opentelemetry-collector-contrib
@@ -19,7 +20,7 @@ serviceAccount:
   create: true
   name: otel-collector
   annotations:
-    # Terraform에서 주입: eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT:role/..."
+    eks.amazonaws.com/role-arn: "arn:aws:iam::961341535601:role/eks-cluster-xeyy1dqr-otel-collector-role"
 
 resources:
   limits:
@@ -111,15 +112,6 @@ config:
                 target_label: kubernetes_pod_name
 
     # ========================================
-    # AWS Container Insights Receiver
-    # ========================================
-    awscontainerinsightreceiver:
-      collection_interval: 60s
-      container_orchestrator: eks
-      add_service_as_attribute: true
-      prefer_full_pod_name: false
-
-    # ========================================
     # OTLP Receiver (애플리케이션 트레이스)
     # ========================================
     otlp:
@@ -129,19 +121,6 @@ config:
         http:
           endpoint: 0.0.0.0:4318
 
-    # ========================================
-    # Host Metrics (노드 레벨)
-    # ========================================
-    hostmetrics:
-      collection_interval: 30s
-      scrapers:
-        cpu: {}
-        disk: {}
-        filesystem: {}
-        load: {}
-        memory: {}
-        network: {}
-        paging: {}
 
   processors:
     # ========================================
@@ -184,7 +163,7 @@ config:
     # Prometheus Remote Write (AMP)
     # ========================================
     prometheusremotewrite:
-      # Terraform에서 주입: endpoint: "https://aps-workspaces.ap-northeast-2.amazonaws.com/workspaces/ws-xxx/api/v1/remote_write"
+      endpoint: "https://aps-workspaces.ap-northeast-2.amazonaws.com/workspaces/ws-aca956f6-39cb-4c32-b4c4-073de9e9ec0a/api/v1/remote_write"
       auth:
         authenticator: sigv4auth
 
@@ -192,24 +171,15 @@ config:
     # CloudWatch Logs
     # ========================================
     awscloudwatchlogs:
-      # Terraform에서 주입: log_group_name, region
+      log_group_name: "/aws/eks/eks-cluster-xeyy1dqr/otel-collector"
       log_stream_name: otel-collector
+      region: ap-northeast-2
 
     # ========================================
     # AWS X-Ray
     # ========================================
     awsxray:
-      # Terraform에서 주입: region
-
-    # ========================================
-    # CloudWatch EMF (Container Insights)
-    # ========================================
-    awsemf:
-      namespace: ContainerInsights
-      # Terraform에서 주입: log_group_name, region
-      log_stream_name: performance
-      dimension_rollup_option: NoDimensionRollup
-      parse_json_encoded_attr_values: ["Sources", "kubernetes"]
+      region: ap-northeast-2
 
     # ========================================
     # Logging (디버깅용)
@@ -222,7 +192,7 @@ config:
     # SigV4 Auth (AMP 인증)
     # ========================================
     sigv4auth:
-      # Terraform에서 주입: region
+      region: ap-northeast-2
       service: aps
 
     # ========================================
@@ -233,15 +203,18 @@ config:
 
   service:
     extensions: [sigv4auth, health_check]
+    telemetry:
+      metrics:
+        level: none  # 내부 메트릭 비활성화 (8888 포트 충돌 방지)
     
     pipelines:
       # ========================================
       # 메트릭 파이프라인
       # ========================================
       metrics:
-        receivers: [prometheus, awscontainerinsightreceiver, hostmetrics]
+        receivers: [prometheus]
         processors: [memory_limiter, resourcedetection, attributes, batch]
-        exporters: [prometheusremotewrite, awsemf, logging]
+        exporters: [prometheusremotewrite, logging]
 
       # ========================================
       # 트레이스 파이프라인
@@ -263,11 +236,10 @@ config:
 # Service Ports
 # ========================================
 ports:
+  metrics:
+    enabled: false  # 내부 메트릭 포트 비활성화 (8888 충돌 방지)
   prometheus:
-    enabled: true
-    containerPort: 8888
-    servicePort: 8888
-    protocol: TCP
+    enabled: false  # prometheus 포트 비활성화
   otlp:
     enabled: true
     containerPort: 4317
@@ -283,6 +255,14 @@ ports:
     containerPort: 13133
     servicePort: 13133
     protocol: TCP
+  jaeger-compact:
+    enabled: false
+  jaeger-thrift:
+    enabled: false
+  jaeger-grpc:
+    enabled: false
+  zipkin:
+    enabled: false
 
 # ========================================
 # Tolerations (모든 노드에 배포)
