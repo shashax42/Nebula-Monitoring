@@ -107,9 +107,30 @@ config:
               - action: labelmap
                 regex: __meta_kubernetes_pod_label_(.+)
               - source_labels: [__meta_kubernetes_namespace]
-                target_label: kubernetes_namespace
+                target_label: namespace
               - source_labels: [__meta_kubernetes_pod_name]
-                target_label: kubernetes_pod_name
+                target_label: pod
+              - source_labels: [__meta_kubernetes_pod_label_app]
+                target_label: service
+              - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+                target_label: service
+                regex: (.+)
+                action: replace
+
+          # ========================================
+          # Kube-State-Metrics (클러스터 상태 메트릭)
+          # ========================================
+          - job_name: 'kube-state-metrics'
+            kubernetes_sd_configs:
+              - role: endpoints
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_service_label_app_kubernetes_io_name]
+                action: keep
+                regex: kube-state-metrics
+              - source_labels: [__meta_kubernetes_namespace]
+                target_label: namespace
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
 
     # ========================================
     # OTLP Receiver (애플리케이션 트레이스)
@@ -147,6 +168,21 @@ config:
       spike_limit_mib: 128
 
     # ========================================
+    # Resource Processor (공통 라벨 추가)
+    # ========================================
+    resource:
+      attributes:
+        - key: cluster
+          value: terraform-new
+          action: upsert
+        - key: environment
+          value: dev
+          action: upsert
+        - key: source
+          value: terraform-new-infrastructure
+          action: upsert
+
+    # ========================================
     # Attributes Processor (레이블 추가)
     # ========================================
     attributes:
@@ -157,6 +193,48 @@ config:
         - key: source
           value: terraform-new-infrastructure
           action: insert
+
+    # ========================================
+    # Metrics Transform (메트릭 가공)
+    # ========================================
+    metricstransform:
+      transforms:
+        # CPU 사용률 계산용 라벨 정리
+        - include: container_cpu_usage_seconds_total
+          action: update
+          operations:
+            - action: aggregate_labels
+              label_set: [namespace, pod, container]
+              aggregation_type: sum
+        # 메모리 사용량 라벨 정리
+        - include: container_memory_working_set_bytes
+          action: update
+          operations:
+            - action: aggregate_labels
+              label_set: [namespace, pod, container]
+              aggregation_type: sum
+        # 불필요한 메트릭 필터링 (카디널리티 감소)
+        - include: "^container_.*"
+          match_type: regexp
+          action: update
+          operations:
+            - action: delete_label_value
+              label: id
+            - action: delete_label_value
+              label: name
+
+    # ========================================
+    # Filter Processor (불필요 메트릭 제거)
+    # ========================================
+    filter:
+      metrics:
+        exclude:
+          match_type: regexp
+          metric_names:
+            # 고카디널리티 / 불필요 메트릭 제거
+            - "go_.*"
+            - "process_.*"
+            - "promhttp_.*"
 
   exporters:
     # ========================================
@@ -213,7 +291,7 @@ config:
       # ========================================
       metrics:
         receivers: [prometheus]
-        processors: [memory_limiter, resourcedetection, attributes, batch]
+        processors: [memory_limiter, resourcedetection, resource, attributes, filter, metricstransform, batch]
         exporters: [prometheusremotewrite, logging]
 
       # ========================================

@@ -29,7 +29,7 @@ $HelmDir = Join-Path $RootDir "helm\otel-collector"
 # ========================================
 # Step 1: Terraform Apply (모니터링 인프라)
 # ========================================
-Write-Host "[Step 1/4] Terraform Apply - Monitoring Infrastructure" -ForegroundColor Yellow
+Write-Host "[Step 1/6] Terraform Apply - Monitoring Infrastructure" -ForegroundColor Yellow
 Write-Host "Directory: $TerraformDir" -ForegroundColor Gray
 
 Push-Location $TerraformDir
@@ -56,7 +56,7 @@ try {
 # Step 2: Terraform Outputs 가져오기
 # ========================================
 Write-Host ""
-Write-Host "[Step 2/4] Fetching Terraform Outputs" -ForegroundColor Yellow
+Write-Host "[Step 2/6] Fetching Terraform Outputs" -ForegroundColor Yellow
 
 Push-Location $TerraformDir
 try {
@@ -77,7 +77,7 @@ try {
 # Step 3: EKS 클러스터 kubeconfig 설정
 # ========================================
 Write-Host ""
-Write-Host "[Step 3/4] Configuring kubectl for target cluster" -ForegroundColor Yellow
+Write-Host "[Step 3/6] Configuring kubectl for target cluster" -ForegroundColor Yellow
 
 if ([string]::IsNullOrEmpty($TargetClusterName)) {
     Write-Host "⚠ No target cluster found. Skipping Helm deployment." -ForegroundColor Yellow
@@ -97,7 +97,49 @@ Write-Host "✓ kubeconfig updated" -ForegroundColor Green
 # Step 4: Helm Install OTEL Collector
 # ========================================
 Write-Host ""
-Write-Host "[Step 4/4] Deploying OTEL Collector via Helm" -ForegroundColor Yellow
+Write-Host "[Step 4/6] Deploying Kube-State-Metrics via Helm" -ForegroundColor Yellow
+
+# Helm repo 추가
+Write-Host "Adding Helm repositories..." -ForegroundColor Gray
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
+helm repo update
+
+# Kube-State-Metrics 설치 (Q1~Q4 쿼리에 필수)
+$KsmValuesFile = Join-Path $RootDir "helm\kube-state-metrics\values.yaml"
+Write-Host "Installing Kube-State-Metrics..." -ForegroundColor Gray
+helm upgrade --install kube-state-metrics `
+    prometheus-community/kube-state-metrics `
+    --namespace monitoring `
+    --values $KsmValuesFile `
+    --wait `
+    --timeout 3m
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "⚠ Kube-State-Metrics install failed, continuing..." -ForegroundColor Yellow
+} else {
+    Write-Host "✓ Kube-State-Metrics deployed" -ForegroundColor Green
+}
+
+# ========================================
+# Step 5: RBAC 설정
+# ========================================
+Write-Host ""
+Write-Host "[Step 5/6] Applying RBAC for OTEL Collector" -ForegroundColor Yellow
+
+$RbacFile = Join-Path $RootDir "helm\otel-collector\rbac.yaml"
+if (Test-Path $RbacFile) {
+    kubectl apply -f $RbacFile
+    Write-Host "✓ RBAC applied" -ForegroundColor Green
+} else {
+    Write-Host "⚠ RBAC file not found: $RbacFile" -ForegroundColor Yellow
+}
+
+# ========================================
+# Step 6: Helm Install OTEL Collector
+# ========================================
+Write-Host ""
+Write-Host "[Step 6/6] Deploying OTEL Collector via Helm" -ForegroundColor Yellow
 
 # monitoring namespace 생성
 Write-Host "Creating monitoring namespace..." -ForegroundColor Gray
@@ -128,11 +170,6 @@ $ValuesContent = $ValuesContent -replace '# Terraform에서 주입: region', "re
 $ValuesContent = $ValuesContent -replace 'sigv4auth:\s*\n\s*# Terraform에서 주입: region', "sigv4auth:`n      region: `"$Region`""
 
 $ValuesContent | Out-File -FilePath $TempValuesFile -Encoding UTF8
-
-# Helm repo 추가
-Write-Host "Adding Helm repository..." -ForegroundColor Gray
-helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
-helm repo update
 
 # Helm install/upgrade
 Write-Host "Installing OTEL Collector..." -ForegroundColor Gray

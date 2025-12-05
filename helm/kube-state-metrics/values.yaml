@@ -1,0 +1,80 @@
+# ========================================
+# Kube-State-Metrics Helm Values
+# Q1~Q4 쿼리에 필요한 클러스터 상태 메트릭 제공
+# ========================================
+
+# 설치: helm install kube-state-metrics prometheus-community/kube-state-metrics -n monitoring -f values.yaml
+
+image:
+  registry: registry.k8s.io
+  repository: kube-state-metrics/kube-state-metrics
+  tag: v2.10.1
+
+replicas: 1
+
+resources:
+  limits:
+    cpu: 100m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+# 수집할 리소스 (필요한 것만 - 카디널리티 관리)
+collectors:
+  - nodes
+  - pods
+  - deployments
+  - daemonsets
+  - statefulsets
+  - namespaces
+  - replicasets
+  - jobs
+  - cronjobs
+  - resourcequotas
+  - limitranges
+  - persistentvolumeclaims
+  - persistentvolumes
+  - services
+  - endpoints
+  - configmaps
+  - secrets
+
+# 메트릭 라벨 설정
+metricLabelsAllowlist:
+  - pods=[app,app.kubernetes.io/name,app.kubernetes.io/component,version]
+  - deployments=[app,app.kubernetes.io/name,version]
+  - namespaces=[*]
+
+# Prometheus scrape 설정
+prometheusScrape: true
+
+# Service 설정
+service:
+  port: 8080
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+
+# Pod annotations (OTEL Collector가 자동 수집)
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+
+# 보안 설정
+securityContext:
+  enabled: true
+  runAsUser: 65534
+  fsGroup: 65534
+
+# 네임스페이스 필터 (선택사항)
+# namespaces: ""  # 비워두면 모든 네임스페이스
+
+# 노드 셀렉터
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity
+affinity: {}
