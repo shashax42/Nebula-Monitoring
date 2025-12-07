@@ -22,14 +22,9 @@ variable "enable_target_monitoring" {
   default     = false
 }
 
-variable "target_cluster_name" {
-  description = "terraform_new EKS cluster name (from terraform_new outputs)"
-  type        = string
-  default     = ""  # terraform_new apply 후 출력된 cluster_name 입력
-}
-
 # ========================================
 # terraform_new의 state를 data source로 참조
+# cluster_name을 자동으로 가져옴
 # ========================================
 data "terraform_remote_state" "target_infra" {
   count   = var.enable_target_monitoring ? 1 : 0
@@ -43,25 +38,28 @@ data "terraform_remote_state" "target_infra" {
   }
 }
 
+# 타겟 EKS 클러스터 정보 (remote state에서 자동으로 가져옴)
+locals {
+  # terraform_new의 outputs.cluster_name을 자동으로 읽어옴
+  target_cluster_name = var.enable_target_monitoring ? try(
+    data.terraform_remote_state.target_infra[0].outputs.cluster_name, 
+    ""
+  ) : ""
+}
+
 # ========================================
 # EKS 클러스터 정보 직접 조회
 # terraform_new의 outputs에 OIDC 정보가 없어도 동작
 # ========================================
 data "aws_eks_cluster" "target" {
-  count = var.enable_target_monitoring && var.target_cluster_name != "" ? 1 : 0
-  name  = var.target_cluster_name
+  count = var.enable_target_monitoring && local.target_cluster_name != "" ? 1 : 0
+  name  = local.target_cluster_name
 }
 
 data "aws_caller_identity" "current" {}
 
-# 타겟 EKS 클러스터 정보
+# 타겟 EKS 클러스터 상세 정보
 locals {
-  # Remote state에서 가져오거나, 직접 입력된 값 사용
-  target_cluster_name = var.enable_target_monitoring ? coalesce(
-    var.target_cluster_name,
-    try(data.terraform_remote_state.target_infra[0].outputs.cluster_name, "")
-  ) : ""
-  
   # EKS 클러스터에서 직접 조회
   target_cluster_endpoint = var.enable_target_monitoring && length(data.aws_eks_cluster.target) > 0 ? data.aws_eks_cluster.target[0].endpoint : ""
   target_oidc_issuer      = var.enable_target_monitoring && length(data.aws_eks_cluster.target) > 0 ? data.aws_eks_cluster.target[0].identity[0].oidc[0].issuer : ""
