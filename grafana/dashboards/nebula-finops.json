@@ -1,0 +1,834 @@
+{
+  "uid": "nebula-finops",
+  "title": "Nebula / FinOps & Margin",
+  "description": "Revenue vs Total OpEx, Net Margin 게이지(5%/0%), Burn Rate, 역마진 예측, 유휴 리소스 비용",
+  "tags": [
+    "nebula",
+    "finops"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "amp",
+        "label": "Metrics (AMP)",
+        "type": "datasource",
+        "query": "prometheus",
+        "hide": 0,
+        "refresh": 1,
+        "current": {},
+        "options": [],
+        "regex": ""
+      },
+      {
+        "name": "cluster",
+        "label": "Cluster",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${amp}"
+        },
+        "definition": "label_values(up{job=\"otelcol\"}, cluster)",
+        "query": {
+          "query": "label_values(up{job=\"otelcol\"}, cluster)",
+          "refId": "var-cluster"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "hide": 0,
+        "current": {},
+        "options": [],
+        "regex": ""
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [
+    {
+      "title": "Nebula dashboards",
+      "type": "dashboards",
+      "tags": [
+        "nebula"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true
+    },
+    {
+      "title": "Runbook",
+      "url": "https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md",
+      "targetBlank": true
+    }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "역마진(Margin Erosion) 실시간 탐지",
+      "collapsed": false,
+      "id": 1,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "gauge",
+      "title": "Net Margin (1h)",
+      "description": "Threshold Gauge — 5% 미만 Warning(노랑) / 0% 미만 Deficit(빨강)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "nebula:net_margin:ratio1h{cluster=\"$cluster\"}",
+          "legendFormat": "__auto",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": -0.2,
+          "max": 0.3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 0.05
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "—",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdMarkers": true,
+        "showThresholdLabels": false
+      },
+      "id": 2,
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 6,
+        "h": 8
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Burn Rate (적자 ₩/h)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "nebula:margin_burn_krw:rate1h{cluster=\"$cluster\"}",
+          "legendFormat": "__auto",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyKRW",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "—"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "links": [
+        {
+          "title": "Runbook: 역마진",
+          "url": "https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#netmargindeficit",
+          "targetBlank": true
+        }
+      ],
+      "id": 3,
+      "gridPos": {
+        "x": 6,
+        "y": 1,
+        "w": 6,
+        "h": 8
+      }
+    },
+    {
+      "type": "stat",
+      "title": "BEP 대비 매출",
+      "description": "100% 미만이면 손익분기점(BEP) 미달",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "nebula:bep_coverage:ratio1h{cluster=\"$cluster\"}",
+          "legendFormat": "__auto",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 1
+              },
+              {
+                "color": "green",
+                "value": 1.05
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "—",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 4,
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 6,
+        "h": 8
+      }
+    },
+    {
+      "type": "stat",
+      "title": "6시간 뒤 예상 순마진",
+      "description": "D+? Deficit Entry: 최근 6시간 추세의 선형 외삽 (MarginDeficitPredicted 알림과 동일 식)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "predict_linear(nebula:net_margin:ratio1h{cluster=\"$cluster\"}[6h], 6*3600)",
+          "legendFormat": "__auto",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 0.05
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "—",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 5,
+      "gridPos": {
+        "x": 18,
+        "y": 1,
+        "w": 6,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Revenue vs Total OpEx (₩/h)",
+      "description": "두 선이 교차하면 BEP. Total OpEx = 원가·PG수수료·배송비·쿠폰 + 인프라",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "nebula:revenue_krw:increase1h{cluster=\"$cluster\"}",
+          "legendFormat": "Revenue",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "nebula:opex_krw:increase1h{cluster=\"$cluster\"}",
+          "legendFormat": "Total OpEx",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyKRW",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 6,
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 12,
+        "h": 9
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Net Margin 추세",
+      "description": "점선 = 5% 경고선",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "nebula:net_margin:ratio1h{cluster=\"$cluster\"}",
+          "legendFormat": "net margin",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
+            "axisSoftMax": 0.07500000000000001
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.05
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 7,
+      "gridPos": {
+        "x": 12,
+        "y": 9,
+        "w": 12,
+        "h": 9
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "비용 구성 (COGS Dynamics)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "nebula:order_cost_krw:increase1h{cluster=\"$cluster\"}",
+          "legendFormat": "{{cost_type}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyKRW",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 8,
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "인프라 비용 by 네임스페이스 (₩/h)",
+      "description": "requests × 단가 (prometheus/rules/05-finops 의 단가 상수)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "topk(10, namespace:infra_cost_krw:rate1h{cluster=\"$cluster\"})",
+          "legendFormat": "{{namespace}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyKRW",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 9,
+      "gridPos": {
+        "x": 12,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
+      "title": "Predictive & Efficiency — 유휴 리소스",
+      "collapsed": false,
+      "id": 10,
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "유휴 리소스 점수 (1 = 전부 유휴)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "sort_desc(namespace:idle_resource_score:ratio1d{cluster=\"$cluster\"})",
+          "legendFormat": "__auto",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "#EAB839",
+                      "value": 0.5
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.8
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Idle score",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "collector": true,
+              "environment": true,
+              "cluster": true,
+              "otel_scope_name": true,
+              "otel_scope_version": true,
+              "otel_scope_schema_url": true
+            },
+            "renameByName": {
+              "Value": "Idle score",
+              "namespace": "네임스페이스"
+            }
+          }
+        }
+      ],
+      "id": 11,
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 12,
+        "h": 9
+      }
+    },
+    {
+      "type": "table",
+      "title": "유휴로 낭비되는 비용 (₩/h)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "sort_desc(namespace:idle_cost_krw:rate1h{cluster=\"$cluster\"})",
+          "legendFormat": "__auto",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyKRW",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "₩/h",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "collector": true,
+              "environment": true,
+              "cluster": true,
+              "otel_scope_name": true,
+              "otel_scope_version": true,
+              "otel_scope_schema_url": true
+            },
+            "renameByName": {
+              "Value": "₩/h",
+              "namespace": "네임스페이스"
+            }
+          }
+        }
+      ],
+      "id": 12,
+      "gridPos": {
+        "x": 12,
+        "y": 27,
+        "w": 12,
+        "h": 9
+      }
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+2026-10-05T10:00:00.000000001Z stdout F {"level":"info","message":"order created for kim@example.com phone 010-1234-5678","trace_id":"0af7651916cd43dd8448eb211c80319c","tenant_id":"acme"}
+2026-10-05T10:00:01.000000001Z stdout F {"level":"debug","message":"cache miss"}
+2026-10-05T10:00:02.000000001Z stderr F {"level":"error","msg":"payment failed card 1234-5678-9012-3456 Authorization: Bearer abc.def password=hunter2"}
+2026-10-05T10:00:03.000000001Z stdout F 10.0.0.1 - - "GET /healthz HTTP/1.1" 200 2 "-" "kube-probe/1.29"

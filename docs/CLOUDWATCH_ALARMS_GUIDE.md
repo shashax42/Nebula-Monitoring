@@ -2,34 +2,43 @@
 
 ## 알람 구성
 
-### Application Performance (SLO 기반)
+CloudWatch Alarms 는 **Alertmanager 대체 계층**으로, "고객 영향이 확정된" SLA/비즈니스 경보를 담당한다.
+조기 경보(번레이트, 테넌트, 이상탐지, 쿠버네티스)는 AMP 알림 규칙 → AMP Alertmanager → **같은 SNS 토픽**으로 온다.
 
-| 알람 | 임계값 | 설명 |
-|------|--------|------|
-| **High Error Rate** | > 5% | 에러율이 5% 초과 |
-| **High Latency P95** | > 1초 | P95 레이턴시 1초 초과 |
-| **Low Availability** | < 99.9% | 가용성 99.9% 미달 (SLO 위반) |
+데이터 출처: gateway 가 트레이스에서 직접 센 SLI 를 EMF 로 `Nebula/Application` 에 보낸다
+(`Requests`, `Errors`, `SlowRequests` — 차원 `Environment`[, `Service`] / `PaymentRequests`, `PaymentLogicalErrors`).
 
-### Infrastructure
+### SLA / Golden Signals
 
-| 알람 | 임계값 | 설명 |
-|------|--------|------|
-| **EKS Node CPU** | > 80% | 노드 CPU 사용률 80% 초과 |
-| **EKS Node Memory** | > 80% | 노드 메모리 사용률 80% 초과 |
-| **Pod Restart Rate** | > 5/분 | Pod 재시작 빈도 과다 |
-
-### OTEL Collector Health
-
-| 알람 | 임계값 | 설명 |
-|------|--------|------|
-| **Collector Down** | 메트릭 없음 | OTEL Collector 다운 |
-| **Collector Memory** | > 80% | Collector 메모리 사용률 과다 |
-
-### Composite Alarm
-
-| 알람 | 조건 | 설명 |
+| 알람 | 조건 (기본값) | 토픽 |
 |------|------|------|
-| **Service Degradation** | 복합 조건 | 여러 지표가 동시에 악화 |
+| `<env>-sla-availability` | 가용성 < 99.9% (5분 × 3회 연속, 기간당 요청 50건 이상) | critical |
+| `<env>-sla-availability-<service>` | 핵심 서비스(`slo_services`)별 동일 조건 | critical |
+| `<env>-error-rate` | 에러율 > 5% | warning |
+| `<env>-latency-slo` | 1s 초과 요청 > 5% (= P95 > 1s) | warning |
+| `<env>-service-degradation` (Composite) | SLA 위반 OR (에러율 AND 지연) OR PG 타임아웃 | critical |
+
+### 결제 (비즈니스 완결성)
+
+| 알람 | 조건 | 토픽 |
+|------|------|------|
+| `<env>-payment-pg-timeout` | `FailureCategory=pg_timeout` 비율 > 1% | critical |
+| `<env>-payment-failure-rate` | 전체 결제 실패율 > 10% (고객 원인 포함) | warning |
+| `<env>-payment-logical-errors` | HTTP 2xx + 결제 실패 > 0건 | critical |
+
+### 데이터 스토어 / 파이프라인
+
+| 알람 | 조건 | 토픽 |
+|------|------|------|
+| `<env>-aurora-<id>-cpu-high` / `-deadlocks` / `-replica-lag` | Writer CPU > 80%, 데드락 > 0.1/s, Reader 복제 지연 > 1s | warning |
+| `<env>-redis-<node>-engine-cpu-high` / `-memory-high` / `-evictions` | EngineCPU > 80%, 메모리 > 85%, 축출 > 100/5분 | warning |
+| `<env>-telemetry-log-ingestion-stopped` | 애플리케이션 로그 그룹 유입 0건 15분 (missing = breaching) | critical |
+
+Aurora/Redis 대상은 `aurora_cluster_identifiers`, `redis_replication_group_ids` 변수로 지정한다 (Redis 노드는 자동 조회).
+
+> 이전 버전의 알람(AWS/Lambda Errors, 설치되지 않은 ContainerInsights, 아무도 보내지 않던 `OpenTelemetryCollector` 네임스페이스)은
+> 실제 데이터가 없어 동작하지 않거나(`treat_missing_data=breaching` 인 경우) 항상 ALARM 상태였으므로 제거했다.
+> 노드/파드 경보는 AMP 규칙(`prometheus/rules/01-kubernetes.rules.yaml`)이 담당한다.
 
 ## 알림 설정
 
@@ -38,7 +47,7 @@
 ```hcl
 # terraform/environments/dev/main.tf
 module "cloudwatch_alarms" {
-  email_endpoints = [
+  email_endpoints = [   # dev 는 variables.tf 의 alarm_email_endpoints
     "ops-team@company.com",
     "on-call@company.com"
   ]
@@ -98,57 +107,24 @@ availability_threshold = 99.95 # 99.95%
 
 ## 알람 우선순위
 
-### Critical (즉시 대응)
-- **Low Availability**: 서비스 가용성 SLO 위반
-- **OTEL Collector Down**: 모니터링 시스템 다운
-- **Service Degradation**: 복합 장애 상황
-
-### High (30분 내 대응)
-- **High Error Rate**: 에러율 급증
-- **Pod Restart Rate High**: 안정성 문제
-
-### Medium (업무시간 내 대응)
-- **High Latency P95**: 성능 저하
-- **Node CPU/Memory High**: 리소스 부족
+| 토픽 | 대상 | 기대 대응 |
+|---|---|---|
+| `<env>-alerts-critical` | SLA 위반, PG 타임아웃, 결제 논리 오류, Composite, 로그 유입 중단 + AMP critical 규칙 | 즉시 |
+| `<env>-alerts-warning` | 에러율, 지연 SLO, 결제 실패율, Aurora/Redis + AMP warning/info 규칙 | 업무 시간 내 (info 는 하루 1회 묶음) |
 
 ## 알람 발생 시 대응
 
-### 1. Low Availability 알람
+알람 설명(`alarm_description`)과 AMP 알림의 `runbook_url` 은 모두 [RUNBOOK.md](RUNBOOK.md) 의 해당 항목을 가리킨다.
 
 ```bash
-# 1. Pod 상태 확인
-kubectl get pods -n production --field-selector status.phase!=Running
+# 에러 패턴 (저장 쿼리 nebula-<env>/02-top-error-messages 와 동일)
+aws logs start-query --log-group-name /aws/eks/<cluster>/application \
+  --start-time $(date -d '-1 hour' +%s) --end-time $(date +%s) \
+  --query-string 'fields attributes.service as service, body | filter severity_text in ["ERROR","FATAL"] | stats count(*) by service | sort count(*) desc'
 
-# 2. 최근 에러 로그 확인
-kubectl logs -n production deployment/api --tail=100 | grep ERROR
-
-# 3. 서비스 재시작 (필요시)
-kubectl rollout restart deployment/api -n production
-```
-
-### 2. High Error Rate 알람
-
-```bash
-# 1. 에러 패턴 분석
-aws logs insights query \
-  --log-group-name /aws/eks/nebula-eks-prod/application \
-  --query 'fields @timestamp, @message | filter @message like /ERROR/'
-
-# 2. X-Ray 트레이스 확인
-aws xray get-trace-summaries --time-range-type LastHour
-```
-
-### 3. OTEL Collector Down 알람
-
-```bash
-# 1. Collector Pod 상태 확인
-kubectl get pods -n monitoring -l app=otel-collector
-
-# 2. Collector 로그 확인
-kubectl logs -n monitoring deployment/otel-collector --tail=50
-
-# 3. Collector 재시작
-kubectl rollout restart deployment/otel-collector -n monitoring
+# 수집 파이프라인 상태
+kubectl get pods -n monitoring -l app.kubernetes.io/name=otel-collector
+kubectl logs -n monitoring -l app.kubernetes.io/component=gateway --tail=100
 ```
 
 ## 알람 대시보드
@@ -159,15 +135,15 @@ Grafana에서 알람 상태 모니터링:
 # 알람 상태 쿼리
 ALERTS{alertstate="firing"}
 
-# 알람 히스토리
-increase(cloudwatch_alarm_state_changes_total[24h])
+# 알림별 발화 시간(최근 24h, AMP 규칙)
+sum by (alertname) (count_over_time(ALERTS{alertstate="firing"}[24h]))
 ```
 
 ## 트러블슈팅
 
 ### 알람이 발생하지 않을 때
 
-1. **메트릭 확인**
+1. **메트릭 확인** — EMF 원본은 `/aws/eks/<cluster>/metrics` 로그 그룹에 있다 (gateway `awsemf` 가 쓰는지 확인)
 ```bash
 aws cloudwatch get-metric-statistics \
   --namespace "Nebula/Application" \
@@ -181,7 +157,7 @@ aws cloudwatch get-metric-statistics \
 2. **알람 상태 확인**
 ```bash
 aws cloudwatch describe-alarms \
-  --alarm-names "prod-high-error-rate"
+  --alarm-names "production-error-rate"
 ```
 
 3. **SNS 구독 확인**

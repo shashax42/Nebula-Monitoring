@@ -41,13 +41,17 @@ groups:
 
       - alert: CollectorExportFailing
         expr: |
-          sum by (cluster, component, exporter) (rate({__name__=~"otelcol_exporter_send_failed_(spans|metric_points|log_records)_total"}[5m])) > 0
+          sum by (cluster, component, exporter, signal) (
+            label_replace(rate(otelcol_exporter_send_failed_spans_total[5m]), "signal", "traces", "", "")
+            or label_replace(rate(otelcol_exporter_send_failed_metric_points_total[5m]), "signal", "metrics", "", "")
+            or label_replace(rate(otelcol_exporter_send_failed_log_records_total[5m]), "signal", "logs", "", "")
+          ) > 0
         for: 10m
         labels:
           severity: warning
           team: platform
         annotations:
-          summary: "{{ $labels.component }}/{{ $labels.exporter }} 전송 실패 지속"
+          summary: "{{ $labels.component }}/{{ $labels.exporter }} {{ $labels.signal }} 전송 실패 지속"
           description: "AWS 권한(IRSA), 스로틀링, 네트워크 확인. 재시도 큐가 차면 데이터 유실."
           runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#collectorexportfailing
 
@@ -64,13 +68,17 @@ groups:
 
       - alert: CollectorRefusingData
         expr: |
-          sum by (cluster, component) (rate({__name__=~"otelcol_receiver_refused_(spans|metric_points|log_records)_total"}[5m])) > 0
+          sum by (cluster, component, signal) (
+            label_replace(rate(otelcol_receiver_refused_spans_total[5m]), "signal", "traces", "", "")
+            or label_replace(rate(otelcol_receiver_refused_metric_points_total[5m]), "signal", "metrics", "", "")
+            or label_replace(rate(otelcol_receiver_refused_log_records_total[5m]), "signal", "logs", "", "")
+          ) > 0
         for: 5m
         labels:
           severity: warning
           team: platform
         annotations:
-          summary: "{{ $labels.component }} 가 데이터를 거부 중 (memory_limiter 백프레셔)"
+          summary: "{{ $labels.component }} 가 {{ $labels.signal }} 데이터를 거부 중 (memory_limiter 백프레셔)"
           description: "gateway HPA 상한/메모리 limit 상향 또는 상위 단계 필터 강화."
           runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#collectorrefusingdata
 

@@ -79,14 +79,13 @@ terraform output -raw helm_install_command
    # 1) terraform_new EKS 클러스터 kubeconfig 설정
    aws eks update-kubeconfig --name eks-cluster-xxxx --region ap-northeast-2
 
-   # 2) OTEL Collector Helm 배포
-   helm upgrade --install otel-collector ../../helm/otel-collector \
+   # 2) kube-state-metrics + OTEL Collector(agent/gateway/cluster) 배포
+   helm upgrade --install otel-collector ../../../helm/otel-collector \
      --namespace monitoring --create-namespace \
-     -f ../../helm/otel-collector/values-target-infra.yaml \
-     --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="...role-arn..." \
-     --set config.exporters.prometheusremotewrite.endpoint="...remote_write_url..." \
-     --set config.exporters.awscloudwatchlogs.log_group_name="/aws/eks/eks-cluster-xxxx/otel-collector" \
-     --set config.processors.resource.attributes[0].value="eks-cluster-xxxx"
+     -f ../../../helm/otel-collector/values-target-infra.yaml \
+     --set global.clusterName="eks-cluster-xxxx" \
+     --set global.aws.ampRemoteWriteUrl="...remote_write_url..." \
+     --set gateway.serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="...role-arn..."
    ```
 
 결과:
@@ -101,13 +100,15 @@ terraform output -raw helm_install_command
 
 ```bash
 kubectl get pods -n monitoring
-kubectl logs -n monitoring -l app.kubernetes.io/name=opentelemetry-collector
+kubectl logs -n monitoring -l app.kubernetes.io/name=otel-collector --prefix --tail=100
 ```
 
 ### 4.2 CloudWatch 로그 그룹
 
-- `/aws/eks/<cluster_name>/otel-collector`
-- `/aws/eks/<cluster_name>/application`
+- `/aws/eks/<cluster_name>/application` — 앱 로그 (정제·마스킹 후)
+- `/aws/eks/<cluster_name>/audit` — 감사/결제 로그 (S3 7년 아카이브)
+- `/aws/eks/<cluster_name>/events` — Kubernetes Warning 이벤트
+- `/aws/eks/<cluster_name>/metrics` — EMF (CloudWatch 메트릭 추출용)
 
 ### 4.3 AMP / Grafana
 

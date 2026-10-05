@@ -1,0 +1,1149 @@
+{
+  "uid": "nebula-service-slo",
+  "title": "Nebula / Service SLO & Golden Signals",
+  "description": "서비스별 SLO(가용성 99.9%, P95<1s), 에러 버짓, 번레이트, 라우트/의존성, 로그·트레이스 연결",
+  "tags": [
+    "nebula",
+    "slo",
+    "service"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "amp",
+        "label": "Metrics (AMP)",
+        "type": "datasource",
+        "query": "prometheus",
+        "hide": 0,
+        "refresh": 1,
+        "current": {},
+        "options": [],
+        "regex": ""
+      },
+      {
+        "name": "cluster",
+        "label": "Cluster",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${amp}"
+        },
+        "definition": "label_values(up{job=\"otelcol\"}, cluster)",
+        "query": {
+          "query": "label_values(up{job=\"otelcol\"}, cluster)",
+          "refId": "var-cluster"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "hide": 0,
+        "current": {},
+        "options": [],
+        "regex": ""
+      },
+      {
+        "name": "cloudwatch",
+        "label": "Logs (CloudWatch)",
+        "type": "datasource",
+        "query": "cloudwatch",
+        "hide": 0,
+        "refresh": 1,
+        "current": {},
+        "options": [],
+        "regex": ""
+      },
+      {
+        "name": "xray",
+        "label": "Traces (X-Ray)",
+        "type": "datasource",
+        "query": "grafana-x-ray-datasource",
+        "hide": 0,
+        "refresh": 1,
+        "current": {},
+        "options": [],
+        "regex": ""
+      },
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${amp}"
+        },
+        "definition": "label_values(service:requests:rate5m{cluster=\"$cluster\"}, service_name)",
+        "query": {
+          "query": "label_values(service:requests:rate5m{cluster=\"$cluster\"}, service_name)",
+          "refId": "var-service"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "hide": 0,
+        "current": {},
+        "options": [],
+        "regex": ""
+      },
+      {
+        "name": "region",
+        "label": "Region",
+        "type": "custom",
+        "query": "ap-northeast-2,us-east-1,eu-west-1",
+        "hide": 0,
+        "current": {
+          "text": "ap-northeast-2",
+          "value": "ap-northeast-2"
+        },
+        "options": [],
+        "multi": false,
+        "includeAll": false
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [
+    {
+      "title": "Nebula dashboards",
+      "type": "dashboards",
+      "tags": [
+        "nebula"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true
+    },
+    {
+      "title": "Runbook",
+      "url": "https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md",
+      "targetBlank": true
+    }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "SLO 현황 — $service",
+      "collapsed": false,
+      "id": 1,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "gauge",
+      "title": "30일 가용성 (SLO 99.9%)",
+      "description": "Gauge with Thresholds — 빨강: SLO 위반, 노랑: 목표 근접, 초록: 여유",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "1 - service:sli_error:ratio_rate30d{cluster=\"$cluster\",service_name=\"$service\"}",
+          "legendFormat": "__auto",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0.99,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 0.999
+              },
+              {
+                "color": "green",
+                "value": 0.9995
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "—",
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdMarkers": true,
+        "showThresholdLabels": false
+      },
+      "id": 2,
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 6,
+        "h": 7
+      }
+    },
+    {
+      "type": "gauge",
+      "title": "남은 에러 버짓 (30일)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "clamp_min(service:error_budget_remaining:ratio{cluster=\"$cluster\",service_name=\"$service\"}, 0)",
+          "legendFormat": "__auto",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 0.25
+              },
+              {
+                "color": "green",
+                "value": 0.5
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "—",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdMarkers": true,
+        "showThresholdLabels": false
+      },
+      "id": 3,
+      "gridPos": {
+        "x": 6,
+        "y": 1,
+        "w": 6,
+        "h": 7
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Time to Burn Out",
+      "description": "현재 1시간 번레이트가 유지될 때 남은 30일 에러 버짓이 소진되기까지 시간 (최대 8760h)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "service:error_budget_exhaustion:hours{cluster=\"$cluster\",service_name=\"$service\"}",
+          "legendFormat": "__auto",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "h",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 24
+              },
+              {
+                "color": "#EAB839",
+                "value": 72
+              },
+              {
+                "color": "green",
+                "value": 168
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "—",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 4,
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 6,
+        "h": 7
+      }
+    },
+    {
+      "type": "stat",
+      "title": "현재 번레이트 (1h)",
+      "description": "1 = 정확히 버짓 속도로 소진. 6x/14.4x 는 페이지 알림 기준",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "service:sli_error:ratio_rate1h{cluster=\"$cluster\",service_name=\"$service\"} / 0.001",
+          "legendFormat": "__auto",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "x",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 1
+              },
+              {
+                "color": "orange",
+                "value": 6
+              },
+              {
+                "color": "red",
+                "value": 14.4
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "—",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "links": [
+        {
+          "title": "Runbook: SLO 번레이트",
+          "url": "https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#sloavailabilityburn",
+          "targetBlank": true
+        }
+      ],
+      "id": 5,
+      "gridPos": {
+        "x": 18,
+        "y": 1,
+        "w": 6,
+        "h": 7
+      }
+    },
+    {
+      "type": "row",
+      "title": "Golden Signals",
+      "collapsed": false,
+      "id": 6,
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Traffic (req/s)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "service:requests:rate5m{cluster=\"$cluster\",service_name=\"$service\"}",
+          "legendFormat": "req/s",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 7,
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Errors — 에러율 vs SLO",
+      "description": "Time Series with Goal Line: 점선 = 에러 허용치 0.1%",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "service:error_ratio:rate5m{cluster=\"$cluster\",service_name=\"$service\"}",
+          "legendFormat": "에러율",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
+            "axisSoftMax": 0.0015
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.001
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 8,
+      "gridPos": {
+        "x": 8,
+        "y": 9,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency — P50 / P95 / P99",
+      "description": "점선 = 지연 SLO 1s (P95 기준)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "service:latency_seconds:p50_5m{cluster=\"$cluster\",service_name=\"$service\"}",
+          "legendFormat": "P50",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "service:latency_seconds:p95_5m{cluster=\"$cluster\",service_name=\"$service\"}",
+          "legendFormat": "P95",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "service:latency_seconds:p99_5m{cluster=\"$cluster\",service_name=\"$service\"}",
+          "legendFormat": "P99",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
+            "axisSoftMax": 1.5
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 9,
+      "gridPos": {
+        "x": 16,
+        "y": 9,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "번레이트 (1h / 6h)",
+      "description": "점선 = 6x (페이지 기준). 14.4x 이상이면 1시간 안에 버짓 2% 소진",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "service:sli_error:ratio_rate1h{cluster=\"$cluster\",service_name=\"$service\"} / 0.001",
+          "legendFormat": "1h",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "service:sli_error:ratio_rate6h{cluster=\"$cluster\",service_name=\"$service\"} / 0.001",
+          "legendFormat": "6h",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "x",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
+            "axisSoftMax": 9.0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 6
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 10,
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "지연 SLO 위반 비율 (1s 초과)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "service:sli_latency_bad:ratio_rate1h{cluster=\"$cluster\",service_name=\"$service\"}",
+          "legendFormat": "1h",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "service:sli_latency_bad:ratio_rate5m{cluster=\"$cluster\",service_name=\"$service\"}",
+          "legendFormat": "5m",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
+            "axisSoftMax": 0.07500000000000001
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.05
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 11,
+      "gridPos": {
+        "x": 12,
+        "y": 17,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
+      "title": "라우트 / 의존성",
+      "collapsed": false,
+      "id": 12,
+      "gridPos": {
+        "x": 0,
+        "y": 25,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "라우트별 트래픽·에러·P99",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "service_route:requests:rate5m{cluster=\"$cluster\",service_name=\"$service\"}",
+          "legendFormat": "__auto",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "req/s",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "collector": true,
+              "environment": true,
+              "cluster": true,
+              "otel_scope_name": true,
+              "otel_scope_version": true,
+              "otel_scope_schema_url": true
+            },
+            "renameByName": {
+              "Value": "req/s",
+              "http_route": "라우트",
+              "http_request_method": "메서드",
+              "service_name": "서비스"
+            }
+          }
+        }
+      ],
+      "id": 13,
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 12,
+        "h": 9
+      }
+    },
+    {
+      "type": "table",
+      "title": "의존 서비스 호출 실패율 (client → server)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "service_edge:error_ratio:rate5m{cluster=\"$cluster\"} and on (cluster, environment, client, server) (service_edge:requests:rate5m{cluster=\"$cluster\",client=\"$service\"} or service_edge:requests:rate5m{cluster=\"$cluster\",server=\"$service\"})",
+          "legendFormat": "__auto",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "#EAB839",
+                      "value": 0.01
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.05
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "실패율",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "collector": true,
+              "environment": true,
+              "cluster": true,
+              "otel_scope_name": true,
+              "otel_scope_version": true,
+              "otel_scope_schema_url": true
+            },
+            "renameByName": {
+              "Value": "실패율",
+              "client": "호출자",
+              "server": "피호출자"
+            }
+          }
+        }
+      ],
+      "id": 14,
+      "gridPos": {
+        "x": 12,
+        "y": 26,
+        "w": 12,
+        "h": 9
+      }
+    },
+    {
+      "type": "nodeGraph",
+      "title": "서비스 맵 (X-Ray)",
+      "datasource": {
+        "type": "grafana-x-ray-datasource",
+        "uid": "${xray}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-x-ray-datasource",
+            "uid": "${xray}"
+          },
+          "queryType": "getServiceMap",
+          "region": "default",
+          "query": ""
+        }
+      ],
+      "options": {},
+      "id": 15,
+      "gridPos": {
+        "x": 0,
+        "y": 35,
+        "w": 24,
+        "h": 10
+      }
+    },
+    {
+      "type": "row",
+      "title": "로그 ↔ 트레이스 (Flow)",
+      "collapsed": false,
+      "id": 16,
+      "gridPos": {
+        "x": 0,
+        "y": 45,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "logs",
+      "title": "$service 에러 로그 (trace_id 로 X-Ray 이동)",
+      "description": "",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch}"
+          },
+          "queryMode": "Logs",
+          "region": "default",
+          "logGroupNames": [
+            "/aws/eks/$cluster/application"
+          ],
+          "expression": "fields @timestamp, severity_text, body, trace_id, attributes.tenant_id\n| filter attributes.service = \"$service\" and severity_text in [\"ERROR\", \"FATAL\"]\n| sort @timestamp desc | limit 100",
+          "id": "",
+          "statsGroups": []
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true
+      },
+      "id": 17,
+      "gridPos": {
+        "x": 0,
+        "y": 46,
+        "w": 16,
+        "h": 10
+      }
+    },
+    {
+      "type": "text",
+      "title": "Actionable Links",
+      "options": {
+        "mode": "markdown",
+        "content": "\n**즉시 이동**\n- [X-Ray 트레이스: $service 에러](https://${region}.console.aws.amazon.com/cloudwatch/home?region=${region}#xray:traces/query?~(query~(expression~'service(%22$service%22)*20AND*20error*20%3D*20true')))\n- [X-Ray 서비스 맵](https://${region}.console.aws.amazon.com/cloudwatch/home?region=${region}#xray:service-map/map)\n- [Logs Insights (저장 쿼리: nebula-*)](https://${region}.console.aws.amazon.com/cloudwatch/home?region=${region}#logsV2:logs-insights)\n- [CloudWatch 알람 (SLA)](https://${region}.console.aws.amazon.com/cloudwatch/home?region=${region}#alarmsV2:)\n\n**런북**\n- [가용성 번레이트](https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#sloavailabilityburn) · [지연 번레이트](https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#slolatencyburn)\n- [의존성 에러](https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#servicedependencyerrorshigh) · [배포 직후 이상](https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#errorratioanomaly)\n"
+      },
+      "id": 18,
+      "gridPos": {
+        "x": 16,
+        "y": 46,
+        "w": 8,
+        "h": 10
+      }
+    }
+  ]
+}

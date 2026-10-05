@@ -61,10 +61,9 @@ Configuration → Data Sources → Prometheus
 ### 2. CloudWatch
 
 자동으로 연결됩니다. 사용 가능한 네임스페이스:
-- `AWS/EKS`
-- `AWS/Lambda`
-- `AWS/RDS`
-- `Nebula/Application` (커스텀)
+- `AWS/RDS`, `AWS/ElastiCache` (Data Stores 대시보드)
+- `Nebula/Application` — gateway 가 EMF 로 보내는 SLI/결제 지표 (CloudWatch Alarms 대상)
+- `Nebula/Logs` — 로그 메트릭 필터 (ErrorLogs, OOMKilledEvents)
 
 ### 3. X-Ray
 
@@ -76,28 +75,24 @@ Explore → X-Ray → Service Map
 
 ## 대시보드 구성
 
-### 사전 구성된 대시보드
+### 프로비저닝 (권장)
 
-1. **Cluster Overview**
-   - CPU/Memory 사용률
-   - 네트워크 I/O
-   - Pod 상태
-
-2. **Application Performance**
-   - Request Rate
-   - Error Rate
-   - P95 Latency
-   - Availability (SLO)
-
-### 대시보드 임포트
-
-```json
-# terraform/modules/amg/dashboards/ 폴더의 JSON 파일 사용
-1. Dashboards → Import
-2. Upload JSON file 선택
-3. 데이터 소스 매핑
-4. Import 클릭
+```bash
+./scripts/provision-grafana.sh dev
 ```
+
+- 데이터소스 3개를 uid 고정(`amp`, `cloudwatch`, `xray`)으로 만들고 워크스페이스 IAM 역할로 인증한다.
+- `grafana/dashboards/*.json` 을 `Nebula` 폴더에 덮어쓴다. 대시보드는 `grafana/generate_dashboards.py` 로 생성한다 (JSON 직접 수정 금지).
+
+| 대시보드 | 내용 |
+|---|---|
+| Nebula / Overview (Q1–Q5) | 클러스터 건강 → 서비스 에러 → 지연 → 리소스 → 시스템 개요 |
+| Nebula / Service SLO & Golden Signals | 30일 가용성 게이지, 남은 버짓, Time to Burn Out, 번레이트, 목표선, 라우트/의존성, 서비스 맵, 에러 로그 |
+| Nebula / Business Flow & Payments | 퍼널 Drop %, 전환율, PG 실패 원인 분리, 논리 오류, 카드사 거절률, Consumer Lag |
+| Nebula / Tenants | tenant_id 별 Golden Signals, 티어 SLA, Noisy Neighbor, 테넌트 비용 효율 |
+| Nebula / FinOps & Margin | Net Margin 게이지, Burn Rate, BEP, 역마진 예측, 비용 구성, 유휴 비용 |
+| Nebula / Data Stores | Aurora / Redis (CloudWatch) |
+| Nebula / Telemetry Pipeline | 수집량, 정제량, 샘플링, 전송 실패, 카디널리티 |
 
 ### 커스텀 대시보드 생성
 
@@ -106,14 +101,14 @@ Explore → X-Ray → Service Map
 3. Query 작성:
 
 ```promql
-# 예시: 서비스별 요청률
-sum(rate(http_requests_total[5m])) by (service)
+# 예시: 서비스별 요청률 (트레이스에서 만든 레코딩 규칙)
+service:requests:rate5m
 
 # 예시: 에러율
-sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))
+service:error_ratio:rate5m{service_name="payment-service"}
 
-# 예시: P95 레이턴시
-histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))
+# 예시: P95 레이턴시 (원천 히스토그램에서 직접)
+histogram_quantile(0.95, sum by (le) (rate(traces_span_metrics_duration_seconds_bucket{service_name="payment-service", span_kind="SPAN_KIND_SERVER"}[5m])))
 ```
 
 ## 알림 설정
@@ -158,8 +153,8 @@ Alerting → Alert rules → New alert rule
 # Bad: 모든 메트릭 조회
 {__name__=~".*"}
 
-# Good: 필요한 메트릭만
-http_requests_total{service="api"}
+# Good: 레코딩 규칙(사전 가공) 사용
+service:requests:rate5m{service_name="api-gateway"}
 ```
 
 ### 3. 변수 활용

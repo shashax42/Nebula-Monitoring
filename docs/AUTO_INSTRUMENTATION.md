@@ -1,5 +1,11 @@
 # OpenTelemetry Auto-Instrumentation 가이드
 
+> **Nebula 표준 설정은 `k8s/otel-operator/instrumentation.yaml` 이다.** 아래 예시보다 우선한다.
+> - 샘플러 `parentbased_always_on`: 샘플링은 gateway tail sampling 이 결정한다 (SDK 에서 버리면 SLO 지표가 과소 집계됨)
+> - 엔드포인트 `http://otel-collector.monitoring.svc:4318` (같은 노드의 agent)
+> - `x-tenant-id` 헤더 캡처 + Baggage 의 `tenant.id` 를 span 속성으로 복사
+> - 데이터 규약: [TELEMETRY_CONTRACT.md](TELEMETRY_CONTRACT.md)
+
 ##OTEL Operator 설치
 
 ```bash

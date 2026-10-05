@@ -1,0 +1,882 @@
+{
+  "uid": "nebula-datastores",
+  "title": "Nebula / Data Stores (Aurora, Redis)",
+  "description": "Aurora 락/데드락/복제 지연, Redis CPU/메모리/축출 — CloudWatch 기본 메트릭",
+  "tags": [
+    "nebula",
+    "datastore"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "cloudwatch",
+        "label": "CloudWatch",
+        "type": "datasource",
+        "query": "cloudwatch",
+        "hide": 0,
+        "refresh": 1,
+        "current": {},
+        "options": [],
+        "regex": ""
+      },
+      {
+        "name": "aurora",
+        "label": "Aurora cluster",
+        "type": "query",
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${cloudwatch}"
+        },
+        "hide": 0,
+        "refresh": 1,
+        "query": {
+          "queryType": "DimensionValues",
+          "region": "default",
+          "namespace": "AWS/RDS",
+          "metricName": "CPUUtilization",
+          "dimensionKey": "DBClusterIdentifier",
+          "refId": "var-aurora"
+        },
+        "current": {},
+        "options": [],
+        "multi": false,
+        "includeAll": false
+      },
+      {
+        "name": "redis",
+        "label": "Redis node",
+        "type": "query",
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${cloudwatch}"
+        },
+        "hide": 0,
+        "refresh": 1,
+        "query": {
+          "queryType": "DimensionValues",
+          "region": "default",
+          "namespace": "AWS/ElastiCache",
+          "metricName": "EngineCPUUtilization",
+          "dimensionKey": "CacheClusterId",
+          "refId": "var-redis"
+        },
+        "current": {},
+        "options": [],
+        "multi": false,
+        "includeAll": false
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [
+    {
+      "title": "Nebula dashboards",
+      "type": "dashboards",
+      "tags": [
+        "nebula"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true
+    },
+    {
+      "title": "Runbook",
+      "url": "https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md",
+      "targetBlank": true
+    }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Aurora MySQL — $aurora",
+      "collapsed": false,
+      "id": 1,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU (Writer)",
+      "description": "",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch}"
+          },
+          "queryMode": "Metrics",
+          "region": "default",
+          "namespace": "AWS/RDS",
+          "metricName": "CPUUtilization",
+          "dimensions": {
+            "DBClusterIdentifier": "$aurora",
+            "Role": "WRITER"
+          },
+          "statistic": "Average",
+          "period": "",
+          "matchExact": true,
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "id": "",
+          "expression": "",
+          "label": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
+            "axisSoftMax": 120.0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 2,
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "DB 커넥션",
+      "description": "",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch}"
+          },
+          "queryMode": "Metrics",
+          "region": "default",
+          "namespace": "AWS/RDS",
+          "metricName": "DatabaseConnections",
+          "dimensions": {
+            "DBClusterIdentifier": "$aurora",
+            "Role": "WRITER"
+          },
+          "statistic": "Average",
+          "period": "",
+          "matchExact": true,
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "id": "",
+          "expression": "",
+          "label": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 3,
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Deadlocks / s",
+      "description": "",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch}"
+          },
+          "queryMode": "Metrics",
+          "region": "default",
+          "namespace": "AWS/RDS",
+          "metricName": "Deadlocks",
+          "dimensions": {
+            "DBClusterIdentifier": "$aurora",
+            "Role": "WRITER"
+          },
+          "statistic": "Average",
+          "period": "",
+          "matchExact": true,
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "id": "",
+          "expression": "",
+          "label": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 4,
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Row Lock Wait (ms)",
+      "description": "",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch}"
+          },
+          "queryMode": "Metrics",
+          "region": "default",
+          "namespace": "AWS/RDS",
+          "metricName": "RowLockTime",
+          "dimensions": {
+            "DBClusterIdentifier": "$aurora",
+            "Role": "WRITER"
+          },
+          "statistic": "Average",
+          "period": "",
+          "matchExact": true,
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "id": "",
+          "expression": "",
+          "label": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 5,
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Blocked Transactions",
+      "description": "",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch}"
+          },
+          "queryMode": "Metrics",
+          "region": "default",
+          "namespace": "AWS/RDS",
+          "metricName": "BlockedTransactions",
+          "dimensions": {
+            "DBClusterIdentifier": "$aurora",
+            "Role": "WRITER"
+          },
+          "statistic": "Average",
+          "period": "",
+          "matchExact": true,
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "id": "",
+          "expression": "",
+          "label": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 6,
+      "gridPos": {
+        "x": 8,
+        "y": 9,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Replica Lag (Reader, max)",
+      "description": "",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch}"
+          },
+          "queryMode": "Metrics",
+          "region": "default",
+          "namespace": "AWS/RDS",
+          "metricName": "AuroraReplicaLag",
+          "dimensions": {
+            "DBClusterIdentifier": "$aurora",
+            "Role": "READER"
+          },
+          "statistic": "Maximum",
+          "period": "",
+          "matchExact": true,
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "id": "",
+          "expression": "",
+          "label": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
+            "axisSoftMax": 1500.0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 7,
+      "gridPos": {
+        "x": 16,
+        "y": 9,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
+      "title": "ElastiCache Redis — $redis",
+      "collapsed": false,
+      "id": 8,
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Engine CPU",
+      "description": "",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch}"
+          },
+          "queryMode": "Metrics",
+          "region": "default",
+          "namespace": "AWS/ElastiCache",
+          "metricName": "EngineCPUUtilization",
+          "dimensions": {
+            "CacheClusterId": "$redis"
+          },
+          "statistic": "Average",
+          "period": "",
+          "matchExact": true,
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "id": "",
+          "expression": "",
+          "label": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
+            "axisSoftMax": 120.0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 9,
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 6,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "메모리 사용률",
+      "description": "",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch}"
+          },
+          "queryMode": "Metrics",
+          "region": "default",
+          "namespace": "AWS/ElastiCache",
+          "metricName": "DatabaseMemoryUsagePercentage",
+          "dimensions": {
+            "CacheClusterId": "$redis"
+          },
+          "statistic": "Average",
+          "period": "",
+          "matchExact": true,
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "id": "",
+          "expression": "",
+          "label": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
+            "axisSoftMax": 127.5
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 85
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 10,
+      "gridPos": {
+        "x": 6,
+        "y": 18,
+        "w": 6,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Evictions",
+      "description": "",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch}"
+          },
+          "queryMode": "Metrics",
+          "region": "default",
+          "namespace": "AWS/ElastiCache",
+          "metricName": "Evictions",
+          "dimensions": {
+            "CacheClusterId": "$redis"
+          },
+          "statistic": "Sum",
+          "period": "",
+          "matchExact": true,
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "id": "",
+          "expression": "",
+          "label": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 11,
+      "gridPos": {
+        "x": 12,
+        "y": 18,
+        "w": 6,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Cache Hit Rate",
+      "description": "",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch}"
+          },
+          "queryMode": "Metrics",
+          "region": "default",
+          "namespace": "AWS/ElastiCache",
+          "metricName": "CacheHitRate",
+          "dimensions": {
+            "CacheClusterId": "$redis"
+          },
+          "statistic": "Average",
+          "period": "",
+          "matchExact": true,
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "id": "",
+          "expression": "",
+          "label": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 12,
+      "gridPos": {
+        "x": 18,
+        "y": 18,
+        "w": 6,
+        "h": 8
+      }
+    }
+  ]
+}

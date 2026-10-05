@@ -48,14 +48,16 @@ export LOG_GROUP=$(terraform output -raw otel_collector_log_group)
 helm upgrade --install otel-collector ./helm/otel-collector \
   --namespace monitoring \
   --create-namespace \
-  --values ./helm/otel-collector/values.yaml \
   --values ./helm/otel-collector/values-${ENV}.yaml \
-  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="${ROLE_ARN}" \
-  --set aws.amp.endpoint="${AMP_ENDPOINT}" \
-  --set aws.amp.workspaceId="${AMP_WORKSPACE_ID}" \
-  --set aws.cloudwatch.logGroup="${LOG_GROUP}" \
+  --set global.clusterName="${CLUSTER_NAME}" \
+  --set global.environment="${ENV}" \
+  --set global.aws.ampRemoteWriteUrl="$(terraform output -raw amp_remote_write_url)" \
+  --set gateway.serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="${ROLE_ARN}" \
   --wait
 ```
+
+로그 그룹은 `/aws/eks/<clusterName>/{application,audit,events,metrics}` 로 자동 계산된다
+(다르게 쓰려면 `global.aws.cloudwatch.*LogGroup`). 정제/샘플링 튜닝 값은 `pipeline.*` (values.yaml 상단).
 
 ## 🔄 자동화 스크립트 사용
 

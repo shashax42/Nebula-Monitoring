@@ -1,0 +1,68 @@
+# 로컬 E2E: simulator → agent → gateway → Prometheus(nebula 규칙) → Grafana(nebula 대시보드)
+#   python3 render.py && docker compose up -d
+#   python3 ../telemetry-simulator/simulate.py --endpoint http://localhost:4318
+#   Grafana: http://localhost:3000 (admin/admin)   Prometheus: http://localhost:9090
+x-otel-env: &otel-env
+  CLUSTER_NAME: local
+  ENVIRONMENT: dev
+  AWS_REGION: ap-northeast-2
+  K8S_NODE_NAME: local-node
+  GATEWAY_OTLP_ENDPOINT: gateway:4317
+  GATEWAY_HEADLESS_HOST: gateway
+  SELF_LOG_GLOB: /var/log/pods/monitoring_otel-collector-*/*/*.log
+  LOG_MIN_SEVERITY_NUMBER: "9"
+  TRACE_BASELINE_SAMPLING_PERCENT: "10"
+  TRACE_LATENCY_THRESHOLD_MS: "1000"
+  TRACE_CRITICAL_SERVICES_REGEX: "^(api-gateway|payment-service)$"
+  TRACE_CRITICAL_SAMPLING_PERCENT: "50"
+  SLI_LATENCY_THRESHOLD_MS: "1000"
+
+services:
+  gateway:
+    image: otel/opentelemetry-collector-contrib:0.162.0
+    command: ["--config=/conf/gateway.yaml"]
+    environment:
+      <<: *otel-env
+      POD_NAME: gateway-0
+      POD_IP: gateway
+    volumes:
+      - ./generated:/conf:ro
+      - ./out:/out
+    ports: ["9464:9464"]
+
+  agent:
+    image: otel/opentelemetry-collector-contrib:0.162.0
+    command: ["--config=/conf/agent.yaml"]
+    user: "0"
+    environment:
+      <<: *otel-env
+      POD_NAME: agent-0
+      POD_IP: agent
+    volumes:
+      - ./generated:/conf:ro
+      - ./sample-logs:/var/log/pods:ro
+      - agent-checkpoint:/var/lib/otelcol/agent
+    ports: ["4317:4317", "4318:4318"]
+    depends_on: [gateway]
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--web.enable-lifecycle"]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../../prometheus/rules:/etc/prometheus/rules:ro
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../grafana/dashboards:/var/lib/grafana/dashboards/nebula:ro
+    ports: ["3000:3000"]
+
+volumes:
+  agent-checkpoint: {}

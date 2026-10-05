@@ -1,0 +1,897 @@
+{
+  "uid": "nebula-pipeline",
+  "title": "Nebula / Telemetry Pipeline",
+  "description": "모니터링의 모니터링: 수집량, 정제량, 샘플링, 전송 실패, 큐, 카디널리티",
+  "tags": [
+    "nebula",
+    "pipeline"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "amp",
+        "label": "Metrics (AMP)",
+        "type": "datasource",
+        "query": "prometheus",
+        "hide": 0,
+        "refresh": 1,
+        "current": {},
+        "options": [],
+        "regex": ""
+      },
+      {
+        "name": "cluster",
+        "label": "Cluster",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${amp}"
+        },
+        "definition": "label_values(up{job=\"otelcol\"}, cluster)",
+        "query": {
+          "query": "label_values(up{job=\"otelcol\"}, cluster)",
+          "refId": "var-cluster"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "hide": 0,
+        "current": {},
+        "options": [],
+        "regex": ""
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [
+    {
+      "title": "Nebula dashboards",
+      "type": "dashboards",
+      "tags": [
+        "nebula"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true
+    },
+    {
+      "title": "Runbook",
+      "url": "https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md",
+      "targetBlank": true
+    }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "수집 파이프라인 상태",
+      "collapsed": false,
+      "id": 1,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "gateway 파드",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "count(up{cluster=\"$cluster\",job=\"otelcol\",component=\"gateway\"} == 1) or vector(0)",
+          "legendFormat": "__auto",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "—"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 2,
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "agent / 노드",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "count(up{cluster=\"$cluster\",job=\"otelcol\",component=\"agent\"} == 1) / count(kube_node_info{cluster=\"$cluster\"})",
+          "legendFormat": "__auto",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 0.9
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "—"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "links": [
+        {
+          "title": "Runbook: agent 누락",
+          "url": "https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#telemetryagentmissing",
+          "targetBlank": true
+        }
+      ],
+      "id": 3,
+      "gridPos": {
+        "x": 6,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "export 실패 (/s)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "sum(label_replace(rate(otelcol_exporter_send_failed_spans_total{cluster=\"$cluster\"}[5m]), \"signal\", \"traces\", \"\", \"\") or label_replace(rate(otelcol_exporter_send_failed_metric_points_total{cluster=\"$cluster\"}[5m]), \"signal\", \"metrics\", \"\", \"\") or label_replace(rate(otelcol_exporter_send_failed_log_records_total{cluster=\"$cluster\"}[5m]), \"signal\", \"logs\", \"\", \"\")) or vector(0)",
+          "legendFormat": "__auto",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.001
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "—",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "links": [
+        {
+          "title": "Runbook: export 실패",
+          "url": "https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#collectorexportfailing",
+          "targetBlank": true
+        }
+      ],
+      "id": 4,
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "거부(백프레셔) (/s)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "sum(label_replace(rate(otelcol_receiver_refused_spans_total{cluster=\"$cluster\"}[5m]), \"signal\", \"traces\", \"\", \"\") or label_replace(rate(otelcol_receiver_refused_metric_points_total{cluster=\"$cluster\"}[5m]), \"signal\", \"metrics\", \"\", \"\") or label_replace(rate(otelcol_receiver_refused_log_records_total{cluster=\"$cluster\"}[5m]), \"signal\", \"logs\", \"\", \"\")) or vector(0)",
+          "legendFormat": "__auto",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.001
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "—",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 5,
+      "gridPos": {
+        "x": 18,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "수신량 by 신호",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "sum(rate(otelcol_receiver_accepted_spans_total{cluster=\"$cluster\",job=\"otelcol\",component=\"gateway\"}[5m]))",
+          "legendFormat": "spans/s",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "sum(rate(otelcol_receiver_accepted_log_records_total{cluster=\"$cluster\",job=\"otelcol\",component=\"gateway\"}[5m]))",
+          "legendFormat": "log records/s",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "sum(rate(otelcol_receiver_accepted_metric_points_total{cluster=\"$cluster\",job=\"otelcol\",component=\"gateway\"}[5m]))",
+          "legendFormat": "metric points/s",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 6,
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "정제로 제거된 양 (filter)",
+      "description": "헬스체크/디버그 로그/런타임 메트릭 등 노이즈 제거량 — 비용 절감 효과",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "sum by (component) (rate(otelcol_processor_filter_spans_filtered_total{cluster=\"$cluster\"}[5m]))",
+          "legendFormat": "spans {{component}}",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "sum by (component) (rate(otelcol_processor_filter_logs_filtered_total{cluster=\"$cluster\"}[5m]))",
+          "legendFormat": "logs {{component}}",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "sum by (component) (rate(otelcol_processor_filter_datapoints_filtered_total{cluster=\"$cluster\"}[5m]))",
+          "legendFormat": "datapoints {{component}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 7,
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "tail sampling 결정",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "sum by (decision) (rate(otelcol_processor_tail_sampling_global_count_traces_sampled_total{cluster=\"$cluster\"}[5m]))",
+          "legendFormat": "{{decision}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 8,
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "exporter 큐 사용률",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "max by (component, exporter) (otelcol_exporter_queue_size{cluster=\"$cluster\"} / otelcol_exporter_queue_capacity{cluster=\"$cluster\"})",
+          "legendFormat": "{{component}}/{{exporter}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
+            "axisSoftMax": 1.2000000000000002
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.8
+              }
+            ]
+          },
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 9,
+      "gridPos": {
+        "x": 12,
+        "y": 13,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "컬렉터 메모리 (RSS)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "otelcol_process_memory_rss{cluster=\"$cluster\",job=\"otelcol\"}",
+          "legendFormat": "{{component}} {{instance}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 10,
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "table",
+      "title": "scrape 타겟별 샘플 수 (카디널리티)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "topk(15, scrape_samples_post_metric_relabeling{cluster=\"$cluster\"})",
+          "legendFormat": "__auto",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "links": [
+            {
+              "title": "Runbook: 카디널리티",
+              "url": "https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#highcardinalitytarget",
+              "targetBlank": true
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "#EAB839",
+                      "value": 10000
+                    },
+                    {
+                      "color": "red",
+                      "value": 20000
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "samples/scrape",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "collector": true,
+              "environment": true,
+              "cluster": true,
+              "otel_scope_name": true,
+              "otel_scope_version": true,
+              "otel_scope_schema_url": true
+            },
+            "renameByName": {
+              "Value": "samples/scrape"
+            }
+          }
+        }
+      ],
+      "id": 11,
+      "gridPos": {
+        "x": 12,
+        "y": 21,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "로그량 by 서비스·레벨 (정제 후)",
+      "description": "CloudWatch Logs 비용의 선행 지표",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "topk(10, sum by (service, level) (service:log_records:rate5m{cluster=\"$cluster\"}))",
+          "legendFormat": "{{service}} {{level}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 12,
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 24,
+        "h": 8
+      }
+    }
+  ]
+}

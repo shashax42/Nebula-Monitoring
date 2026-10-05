@@ -238,3 +238,24 @@ tests:
       - alertname: TelemetryGatewayAbsent
         eval_time: 20m
         exp_alerts: []
+
+  # ------------------------------------------------------------------
+  # FinOps 견고성: 인프라 비용(KSM) 신호가 없어도 마진은 계산된다
+  # ------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'nebula_order_revenue_total{cluster="c2",environment="dev",tenant_id="t1"}'
+        values: '0+1000x90'
+      - series: 'nebula_order_cost_total{cluster="c2",environment="dev",cost_type="cogs"}'
+        values: '0+600x90'
+    promql_expr_test:
+      - expr: nebula:margin_krw:increase1h
+        eval_time: 70m
+        exp_samples:
+          - labels: '{__name__="nebula:margin_krw:increase1h",cluster="c2"}'
+            value: 24000
+      - expr: nebula:net_margin:ratio1h
+        eval_time: 70m
+        exp_samples:
+          - labels: '{__name__="nebula:net_margin:ratio1h",cluster="c2"}'
+            value: 0.4

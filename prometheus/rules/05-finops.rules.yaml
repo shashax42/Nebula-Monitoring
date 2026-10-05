@@ -57,11 +57,15 @@ groups:
       - record: nebula:order_cost_krw:increase1h
         expr: sum by (cluster, cost_type) (increase(nebula_order_cost_total[1h]))
       # Total OpEx = 주문 변동비(원가·PG수수료·배송비·쿠폰) + 인프라 비용
+      #   인프라 비용 신호(kube-state-metrics)가 없을 때도 주문 변동비만으로 마진을 계산하도록 0 으로 대체
       - record: nebula:opex_krw:increase1h
         expr: |
           sum by (cluster) (nebula:order_cost_krw:increase1h)
           + on (cluster)
-          cluster:infra_cost_krw:rate1h
+          (
+            cluster:infra_cost_krw:rate1h
+            or on (cluster) sum by (cluster) (nebula:order_cost_krw:increase1h) * 0
+          )
       - record: nebula:margin_krw:increase1h
         expr: nebula:revenue_krw:increase1h - on (cluster) nebula:opex_krw:increase1h
       - record: nebula:net_margin:ratio1h

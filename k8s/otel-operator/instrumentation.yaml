@@ -1,0 +1,47 @@
+# OpenTelemetry Operator 자동 계측 설정 (docs/AUTO_INSTRUMENTATION.md, docs/TELEMETRY_CONTRACT.md)
+#   - 앱은 같은 노드의 agent(Service otel-collector, internalTrafficPolicy=Local)로 전송
+#   - 샘플링은 gateway 의 tail sampling 이 결정하므로 SDK 는 전부 보낸다 (parentbased_always_on)
+#     → SDK 에서 미리 버리면 spanmetrics(RED/SLO)가 실제 트래픽보다 적게 집계된다
+#   - tenant.id 는 Baggage 로 전파하고 모든 스팬 속성으로 복사 (DB 스팬까지 → Noisy Neighbor 분석)
+#
+# 사용: 워크로드 namespace 에 apply 후 Deployment 에 annotation
+#   instrumentation.opentelemetry.io/inject-java: "monitoring/nebula"
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: nebula
+  namespace: monitoring
+spec:
+  exporter:
+    endpoint: http://otel-collector.monitoring.svc:4318
+  propagators: [tracecontext, baggage]
+  sampler:
+    type: parentbased_always_on
+  resource:
+    addK8sUIDAttributes: false
+  env:
+    - name: OTEL_EXPORTER_OTLP_PROTOCOL
+      value: http/protobuf
+    # 서버 요청 헤더 x-tenant-id 를 span 속성(http.request.header.x-tenant-id)으로 캡처 → gateway 가 tenant.id 로 정규화
+    - name: OTEL_INSTRUMENTATION_HTTP_SERVER_CAPTURE_REQUEST_HEADERS
+      value: x-tenant-id
+    # 로그는 stdout(JSON) → agent filelog 로 수집. OTLP 로그까지 보내면 중복 저장되므로 끈다
+    - name: OTEL_LOGS_EXPORTER
+      value: none
+    - name: OTEL_METRIC_EXPORT_INTERVAL
+      value: "30000"
+  java:
+    env:
+      # Baggage 의 tenant.id / tenant.tier 를 모든 span 속성으로 복사
+      - name: OTEL_JAVA_EXPERIMENTAL_SPAN_ATTRIBUTES_COPY_FROM_BAGGAGE_INCLUDE
+        value: tenant.id,tenant.tier
+      - name: OTEL_INSTRUMENTATION_LOGBACK_MDC_ADD_BAGGAGE
+        value: "true"
+  nodejs:
+    env:
+      - name: OTEL_NODE_RESOURCE_DETECTORS
+        value: env,host,os,container
+  python:
+    env:
+      - name: OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED
+        value: "false"

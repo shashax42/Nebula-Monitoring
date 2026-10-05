@@ -148,51 +148,40 @@ AMP_ENDPOINT=$(terraform output -raw amp_remote_write_url)
 # 2. kubeconfig 설정
 aws eks update-kubeconfig --name $TARGET_CLUSTER --region ap-northeast-2 --profile monitoring-admin
 
-# 3. Helm 배포
-helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
-helm repo update
+# 3. Helm 배포 (이 저장소의 차트: agent DaemonSet + gateway + cluster)
+helm upgrade --install kube-state-metrics prometheus-community/kube-state-metrics \
+  --namespace monitoring --create-namespace -f helm/kube-state-metrics/values.yaml
 
-helm upgrade --install otel-collector \
-  open-telemetry/opentelemetry-collector \
+helm upgrade --install otel-collector ./helm/otel-collector \
   --namespace monitoring \
-  --create-namespace \
-  --values helm/otel-collector/values-target-infra.yaml \
-  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=$OTEL_ROLE_ARN \
-  --set config.exporters.prometheusremotewrite.endpoint=$AMP_ENDPOINT \
-  --set config.exporters.awscloudwatchlogs.region=ap-northeast-2 \
-  --set config.exporters.awsxray.region=ap-northeast-2 \
-  --set config.extensions.sigv4auth.region=ap-northeast-2 \
+  -f helm/otel-collector/values-dev.yaml \
+  -f helm/otel-collector/values-target-infra.yaml \
+  --set global.clusterName=$TARGET_CLUSTER \
+  --set global.aws.ampRemoteWriteUrl=$AMP_ENDPOINT \
+  --set gateway.serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=$OTEL_ROLE_ARN \
   --wait
+
+# 4. Grafana 데이터소스/대시보드
+./scripts/provision-grafana.sh dev
 ```
 
 ---
 
 ## 수집되는 데이터
 
-### 메트릭 (→ AMP)
+무엇을 왜 수집하고, 어떻게 정제·가공하는지는 [docs/OBSERVABILITY_DATA_PIPELINE.md](docs/OBSERVABILITY_DATA_PIPELINE.md) 에 정리되어 있다. 요약:
 
-#### Kubernetes 메트릭
-- **API Server**: 요청 수, 레이턴시, 에러율
-- **Nodes**: CPU, 메모리, 디스크, 네트워크
-- **Pods**: 컨테이너 리소스 사용량, 재시작 횟수
-- **cAdvisor**: 컨테이너 세부 메트릭
-
-#### AWS 리소스 메트릭 (CloudWatch → AMP)
-- **Aurora**: CPU, 연결 수, Replica Lag, IOPS
-- **Redis**: CPU, 메모리, Evictions, Cache Hit Rate
-- **EKS Control Plane**: API Server 메트릭
-
-### 로그 (→ CloudWatch Logs)
-
-- **EKS Control Plane Logs**: API, Audit, Authenticator, Controller Manager, Scheduler
-- **Application Logs**: OTLP로 전송된 애플리케이션 로그
-- **OTEL Collector Logs**: 수집기 자체 로그
-
-### 트레이스 (→ X-Ray)
-
-- **애플리케이션 트레이스**: OTLP gRPC/HTTP로 전송된 분산 트레이싱
-- **Service Map**: 마이크로서비스 간 호출 관계
-- **Latency Analysis**: 각 서비스별 응답 시간 분석
+| 신호 | 수집 | 저장 |
+|---|---|---|
+| 컨테이너 로그 (stdout/stderr, 정제·PII 마스킹) | agent `file_log` | CloudWatch `/aws/eks/<cluster>/application` |
+| 감사/결제 로그 | agent → gateway 라우팅 | `/aws/eks/<cluster>/audit` (90일) → S3 7년 |
+| K8s Warning 이벤트 | cluster `k8sobjects` | `/aws/eks/<cluster>/events` |
+| 노드/컨테이너 자원, PVC | agent (kubelet, cAdvisor — 자기 노드만) | AMP |
+| 클러스터 상태 / API server | cluster (kube-state-metrics, apiserver) | AMP |
+| 트레이스 → RED·테넌트·의존성 메트릭 | gateway `span_metrics`, `service_graph` | AMP |
+| 트레이스 원본 (tail sampling 후) | gateway | X-Ray |
+| SLI·결제 지표 (CloudWatch Alarms 용) | gateway `awsemf` | CloudWatch `Nebula/Application` |
+| Aurora / Redis | CloudWatch 기본 메트릭 | CloudWatch (Grafana `Data Stores`) |
 
 ---
 
@@ -202,7 +191,7 @@ helm upgrade --install otel-collector \
 
 ```bash
 kubectl get pods -n monitoring
-kubectl logs -n monitoring -l app.kubernetes.io/name=opentelemetry-collector -f
+kubectl logs -n monitoring -l app.kubernetes.io/component=gateway -f   # agent / cluster 도 같은 방식
 ```
 
 ### 2. AMP에 메트릭이 들어오는지 확인
@@ -263,10 +252,10 @@ kubectl logs -n monitoring <pod-name>
 
 ```bash
 # OTEL Collector 로그에서 에러 확인
-kubectl logs -n monitoring -l app.kubernetes.io/name=opentelemetry-collector | grep -i error
+kubectl logs -n monitoring -l app.kubernetes.io/name=otel-collector --tail=500 | grep -i error
 
 # SigV4 인증 확인
-kubectl logs -n monitoring -l app.kubernetes.io/name=opentelemetry-collector | grep sigv4
+kubectl logs -n monitoring -l app.kubernetes.io/component=gateway --tail=500 | grep -iE "sigv4|AccessDenied"
 ```
 
 **해결**:
@@ -322,7 +311,7 @@ Nebula-Monitoring/
 │           └── target-infrastructure.tf       # ✨ terraform_new 연결
 ├── helm/
 │   └── otel-collector/
-│       └── values-target-infra.yaml          # ✨ 타겟 인프라용 values
+│       └── values-target-infra.yaml          # 타겟 인프라 오버라이드 (계정 고유값은 --set 으로 주입)
 └── scripts/
     └── deploy-target-monitoring.ps1          # ✨ 자동 배포 스크립트
 

@@ -1,0 +1,19 @@
+# AMP 대신 로컬 Prometheus 가 gateway 의 prometheus exporter 를 scrape 하고 같은 규칙을 평가한다.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 30s
+rule_files:
+  - /etc/prometheus/rules/*.rules.yaml
+scrape_configs:
+  - job_name: otelcol
+    honor_labels: true
+    static_configs:
+      - targets: ["gateway:9464"]
+        labels:
+          component: gateway
+    metric_relabel_configs:
+      # PRW 의 external_labels(cluster/environment) 를 로컬에서 재현
+      - target_label: cluster
+        replacement: local
+      - target_label: environment
+        replacement: dev
