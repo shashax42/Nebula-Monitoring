@@ -1,0 +1,285 @@
+# 서비스 Golden Signals + SLO (가용성 99.9%, 지연 "P95 < 1s" = 1s 초과 요청 5% 미만)
+# 입력: gateway span_metrics 커넥터가 트레이스(샘플링 전 100%)에서 만든 traces_span_metrics_*
+#       service_graph 커넥터의 traces_service_graph_*
+# 서버/컨슈머 스팬만 SLI 로 사용 (클라이언트 스팬은 호출자 관점이라 중복 집계됨)
+groups:
+  - name: nebula.service.golden-signals
+    interval: 30s
+    rules:
+      # Traffic
+      - record: service:requests:rate5m
+        expr: sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[5m]))
+      - record: service:requests:rate1h
+        expr: sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[1h]))
+      # Errors (span status ERROR = HTTP 5xx / 예외)
+      - record: service:errors:rate5m
+        expr: sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[5m]))
+      - record: service:error_ratio:rate5m
+        expr: |
+          (service:errors:rate5m or service:requests:rate5m * 0)
+          / service:requests:rate5m
+      # Latency (P99 = 꼬리 지연)
+      - record: service:latency_seconds:p50_5m
+        expr: histogram_quantile(0.50, sum by (cluster, environment, service_name, le) (rate(traces_span_metrics_duration_seconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[5m])))
+      - record: service:latency_seconds:p95_5m
+        expr: histogram_quantile(0.95, sum by (cluster, environment, service_name, le) (rate(traces_span_metrics_duration_seconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[5m])))
+      - record: service:latency_seconds:p99_5m
+        expr: histogram_quantile(0.99, sum by (cluster, environment, service_name, le) (rate(traces_span_metrics_duration_seconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[5m])))
+      # 라우트 단위 (Top-N 느린/에러 라우트)
+      - record: service_route:requests:rate5m
+        expr: sum by (cluster, environment, service_name, http_route, http_request_method) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[5m]))
+      - record: service_route:errors:rate5m
+        expr: sum by (cluster, environment, service_name, http_route, http_request_method) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[5m]))
+      - record: service_route:error_ratio:rate5m
+        expr: |
+          (service_route:errors:rate5m or service_route:requests:rate5m * 0)
+          / service_route:requests:rate5m
+      - record: service_route:latency_seconds:p99_5m
+        expr: histogram_quantile(0.99, sum by (cluster, environment, service_name, http_route, http_request_method, le) (rate(traces_span_metrics_duration_seconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[5m])))
+      # 서비스 의존성 (client → server edge)
+      - record: service_edge:requests:rate5m
+        expr: sum by (cluster, environment, client, server) (rate(traces_service_graph_request_total[5m]))
+      - record: service_edge:error_ratio:rate5m
+        expr: |
+          (sum by (cluster, environment, client, server) (rate(traces_service_graph_request_failed_total[5m]))
+            or service_edge:requests:rate5m * 0)
+          / service_edge:requests:rate5m
+
+  - name: nebula.service.slo-windows
+    interval: 1m
+    rules:
+      - record: service:sli_error:ratio_rate5m
+        expr: |
+          (sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[5m]))
+            or sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[5m])) * 0)
+          / sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[5m]))
+      - record: service:sli_error:ratio_rate30m
+        expr: |
+          (sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[30m]))
+            or sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[30m])) * 0)
+          / sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[30m]))
+      - record: service:sli_error:ratio_rate1h
+        expr: |
+          (sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[1h]))
+            or sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[1h])) * 0)
+          / sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[1h]))
+      - record: service:sli_error:ratio_rate2h
+        expr: |
+          (sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[2h]))
+            or sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[2h])) * 0)
+          / sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[2h]))
+      - record: service:sli_error:ratio_rate6h
+        expr: |
+          (sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[6h]))
+            or sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[6h])) * 0)
+          / sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[6h]))
+      - record: service:sli_error:ratio_rate1d
+        expr: |
+          (sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[1d]))
+            or sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[1d])) * 0)
+          / sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[1d]))
+      - record: service:sli_error:ratio_rate3d
+        expr: |
+          (sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[3d]))
+            or sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[3d])) * 0)
+          / sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[3d]))
+      - record: service:sli_latency_bad:ratio_rate5m
+        expr: |
+          1 - (
+            sum by (cluster, environment, service_name) (rate(traces_span_metrics_duration_seconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", le="1"}[5m]))
+            / sum by (cluster, environment, service_name) (rate(traces_span_metrics_duration_seconds_count{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[5m]))
+          )
+      - record: service:sli_latency_bad:ratio_rate30m
+        expr: |
+          1 - (
+            sum by (cluster, environment, service_name) (rate(traces_span_metrics_duration_seconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", le="1"}[30m]))
+            / sum by (cluster, environment, service_name) (rate(traces_span_metrics_duration_seconds_count{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[30m]))
+          )
+      - record: service:sli_latency_bad:ratio_rate1h
+        expr: |
+          1 - (
+            sum by (cluster, environment, service_name) (rate(traces_span_metrics_duration_seconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", le="1"}[1h]))
+            / sum by (cluster, environment, service_name) (rate(traces_span_metrics_duration_seconds_count{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[1h]))
+          )
+      - record: service:sli_latency_bad:ratio_rate2h
+        expr: |
+          1 - (
+            sum by (cluster, environment, service_name) (rate(traces_span_metrics_duration_seconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", le="1"}[2h]))
+            / sum by (cluster, environment, service_name) (rate(traces_span_metrics_duration_seconds_count{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[2h]))
+          )
+      - record: service:sli_latency_bad:ratio_rate6h
+        expr: |
+          1 - (
+            sum by (cluster, environment, service_name) (rate(traces_span_metrics_duration_seconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", le="1"}[6h]))
+            / sum by (cluster, environment, service_name) (rate(traces_span_metrics_duration_seconds_count{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[6h]))
+          )
+      - record: service:sli_latency_bad:ratio_rate1d
+        expr: |
+          1 - (
+            sum by (cluster, environment, service_name) (rate(traces_span_metrics_duration_seconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", le="1"}[1d]))
+            / sum by (cluster, environment, service_name) (rate(traces_span_metrics_duration_seconds_count{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[1d]))
+          )
+      - record: service:sli_latency_bad:ratio_rate3d
+        expr: |
+          1 - (
+            sum by (cluster, environment, service_name) (rate(traces_span_metrics_duration_seconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", le="1"}[3d]))
+            / sum by (cluster, environment, service_name) (rate(traces_span_metrics_duration_seconds_count{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[3d]))
+          )
+
+  # 30일 에러 버짓 (무거운 쿼리라 5분 간격)
+  - name: nebula.service.error-budget
+    interval: 5m
+    rules:
+      - record: service:sli_error:ratio_rate30d
+        expr: |
+          (sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[30d]))
+            or sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[30d])) * 0)
+          / sum by (cluster, environment, service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[30d]))
+      # 남은 에러 버짓 비율 (1 = 전부 남음, 0 = 소진). SLO 99.9% → 버짓 0.1%
+      - record: service:error_budget_remaining:ratio
+        expr: 1 - service:sli_error:ratio_rate30d / 0.001
+      # Time to Burn Out: 현재(1h) 소진 속도가 유지될 때 남은 버짓이 바닥나기까지 시간
+      #   remaining × 720h ÷ burn_rate(= error_ratio_1h / 0.001), 최대 1년으로 제한
+      - record: service:error_budget_exhaustion:hours
+        expr: |
+          clamp_max(
+            clamp_min(service:error_budget_remaining:ratio, 0) * 720
+            / (service:sli_error:ratio_rate1h / 0.001),
+            8760
+          )
+
+  # 멀티 윈도우 / 멀티 번레이트 알림 (Google SRE Workbook)
+  #   page  : 14.4x (1h & 5m) → 버짓 2%를 1시간에 소진,  6x (6h & 30m) → 버짓 5%를 6시간에 소진
+  #   ticket: 3x (1d & 2h),  1x (3d & 6h)
+  # 저트래픽 오탐 방지: 최근 1시간 평균 0.05 rps(시간당 약 180건) 이상인 서비스만
+  - name: nebula.service.slo-alerts
+    rules:
+      - alert: SLOAvailabilityBurnFast
+        expr: |
+          (
+            service:sli_error:ratio_rate1h > (14.4 * 0.001)
+            and service:sli_error:ratio_rate5m > (14.4 * 0.001)
+          )
+          and on (cluster, environment, service_name) service:requests:rate1h > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          team: service-owner
+          slo: availability
+          window: 1h
+        annotations:
+          summary: "{{ $labels.service_name }} 가용성 SLO 에러 버짓 급속 소진 (14.4x, 1h/5m)"
+          description: "현재 비율 {{ $value | humanizePercentage }}. 이 속도가 유지되면 30일 버짓이 50.0시간 안에 소진된다."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#sloavailabilityburn
+      - alert: SLOAvailabilityBurnFast
+        expr: |
+          (
+            service:sli_error:ratio_rate6h > (6 * 0.001)
+            and service:sli_error:ratio_rate30m > (6 * 0.001)
+          )
+          and on (cluster, environment, service_name) service:requests:rate1h > 0.05
+        for: 15m
+        labels:
+          severity: critical
+          team: service-owner
+          slo: availability
+          window: 6h
+        annotations:
+          summary: "{{ $labels.service_name }} 가용성 SLO 에러 버짓 급속 소진 (6x, 6h/30m)"
+          description: "현재 비율 {{ $value | humanizePercentage }}. 이 속도가 유지되면 30일 버짓이 120.0시간 안에 소진된다."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#sloavailabilityburn
+      - alert: SLOAvailabilityBurnSlow
+        expr: |
+          (
+            service:sli_error:ratio_rate1d > (3 * 0.001)
+            and service:sli_error:ratio_rate2h > (3 * 0.001)
+          )
+          and on (cluster, environment, service_name) service:requests:rate1h > 0.05
+        for: 1h
+        labels:
+          severity: warning
+          team: service-owner
+          slo: availability
+          window: 1d
+        annotations:
+          summary: "{{ $labels.service_name }} 가용성 SLO 에러 버짓 지속 소진 (3x, 1d/2h)"
+          description: "현재 비율 {{ $value | humanizePercentage }}. 이 속도가 유지되면 30일 버짓이 240.0시간 안에 소진된다."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#sloavailabilityburn
+      - alert: SLOAvailabilityBurnSlow
+        expr: |
+          (
+            service:sli_error:ratio_rate3d > (1 * 0.001)
+            and service:sli_error:ratio_rate6h > (1 * 0.001)
+          )
+          and on (cluster, environment, service_name) service:requests:rate1h > 0.05
+        for: 3h
+        labels:
+          severity: warning
+          team: service-owner
+          slo: availability
+          window: 3d
+        annotations:
+          summary: "{{ $labels.service_name }} 가용성 SLO 에러 버짓 지속 소진 (1x, 3d/6h)"
+          description: "현재 비율 {{ $value | humanizePercentage }}. 이 속도가 유지되면 30일 버짓이 720.0시간 안에 소진된다."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#sloavailabilityburn
+      - alert: SLOLatencyBurnFast
+        expr: |
+          (
+            service:sli_latency_bad:ratio_rate1h > (14.4 * 0.05)
+            and service:sli_latency_bad:ratio_rate5m > (14.4 * 0.05)
+          )
+          and on (cluster, environment, service_name) service:requests:rate1h > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          team: service-owner
+          slo: latency
+          window: 1h
+        annotations:
+          summary: "{{ $labels.service_name }} 지연 SLO(P95<1s) 버짓 급속 소진 (14.4x, 1h/5m)"
+          description: "현재 비율 {{ $value | humanizePercentage }}. 이 속도가 유지되면 30일 버짓이 50.0시간 안에 소진된다."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#slolatencyburn
+      - alert: SLOLatencyBurnFast
+        expr: |
+          (
+            service:sli_latency_bad:ratio_rate6h > (6 * 0.05)
+            and service:sli_latency_bad:ratio_rate30m > (6 * 0.05)
+          )
+          and on (cluster, environment, service_name) service:requests:rate1h > 0.05
+        for: 15m
+        labels:
+          severity: critical
+          team: service-owner
+          slo: latency
+          window: 6h
+        annotations:
+          summary: "{{ $labels.service_name }} 지연 SLO(P95<1s) 버짓 급속 소진 (6x, 6h/30m)"
+          description: "현재 비율 {{ $value | humanizePercentage }}. 이 속도가 유지되면 30일 버짓이 120.0시간 안에 소진된다."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#slolatencyburn
+      - alert: SLOLatencyBurnSlow
+        expr: |
+          (
+            service:sli_latency_bad:ratio_rate1d > (3 * 0.05)
+            and service:sli_latency_bad:ratio_rate2h > (3 * 0.05)
+          )
+          and on (cluster, environment, service_name) service:requests:rate1h > 0.05
+        for: 1h
+        labels:
+          severity: warning
+          team: service-owner
+          slo: latency
+          window: 1d
+        annotations:
+          summary: "{{ $labels.service_name }} 지연 SLO(P95<1s) 버짓 지속 소진 (3x, 1d/2h)"
+          description: "현재 비율 {{ $value | humanizePercentage }}. 이 속도가 유지되면 30일 버짓이 240.0시간 안에 소진된다."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#slolatencyburn
+      - alert: ServiceDependencyErrorsHigh
+        expr: service_edge:error_ratio:rate5m > 0.05 and service_edge:requests:rate5m > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          team: service-owner
+        annotations:
+          summary: "{{ $labels.client }} → {{ $labels.server }} 호출 실패율 {{ $value | humanizePercentage }}"
+          description: "의존 서비스 장애 전파 가능성. X-Ray 서비스 맵에서 해당 edge 를 확인."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#servicedependencyerrorshigh

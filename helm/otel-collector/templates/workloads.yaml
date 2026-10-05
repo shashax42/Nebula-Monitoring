@@ -1,0 +1,132 @@
+{{- range $name := list "agent" "gateway" "cluster" }}
+{{- $c := index $.Values $name }}
+{{- if $c.enabled }}
+{{- $ctx := dict "root" $ "name" $name }}
+---
+apiVersion: apps/v1
+kind: {{ $c.kind }}
+metadata:
+  name: {{ include "otel-collector.componentFullname" $ctx }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "otel-collector.componentLabels" $ctx | nindent 4 }}
+spec:
+  {{- if eq $c.kind "Deployment" }}
+  {{- if not (and $c.autoscaling $c.autoscaling.enabled) }}
+  replicas: {{ $c.replicaCount }}
+  {{- end }}
+  {{- if eq $name "cluster" }}
+  # 클러스터 범위 수집기는 동시에 2개가 뜨면 중복 수집 → Recreate
+  strategy:
+    type: Recreate
+  {{- end }}
+  {{- else }}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "otel-collector.componentSelectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include "otel-collector.config" $ctx | sha256sum }}
+        {{- with $c.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "otel-collector.componentSelectorLabels" $ctx | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "otel-collector.serviceAccountName" $ctx }}
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml $c.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: otel-collector
+          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag | default $.Chart.AppVersion }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          args:
+            - --config=/conf/config.yaml
+          securityContext:
+            {{- toYaml $c.securityContext | nindent 12 }}
+          env:
+            {{- include "otel-collector.env" $ctx | nindent 12 }}
+            {{- with $c.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            {{- if ne $name "cluster" }}
+            - name: otlp-grpc
+              containerPort: 4317
+              protocol: TCP
+            - name: otlp-http
+              containerPort: 4318
+              protocol: TCP
+            {{- end }}
+            - name: metrics
+              containerPort: 8888
+              protocol: TCP
+            - name: health
+              containerPort: 13133
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /conf
+              readOnly: true
+            {{- if eq $name "agent" }}
+            - name: varlogpods
+              mountPath: /var/log/pods
+              readOnly: true
+            - name: checkpoint
+              mountPath: /var/lib/otelcol/agent
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "otel-collector.componentFullname" $ctx }}
+        {{- if eq $name "agent" }}
+        - name: varlogpods
+          hostPath:
+            path: {{ $c.hostPaths.varLogPods }}
+        - name: checkpoint
+          hostPath:
+            path: {{ $c.hostPaths.checkpoint }}
+            type: DirectoryOrCreate
+        {{- end }}
+      {{- with $c.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+{{- end }}

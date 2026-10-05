@@ -1,0 +1,94 @@
+# Predictive & Efficiency: 이상 감지(z-score) + 유휴 리소스 점수
+#   z-score = (현재값 - 최근 1일 평균) / 최근 1일 표준편차.  |z| > 3 이면 평소 분포에서 벗어난 값.
+#   주의: 1일 창은 요일/계절성을 반영하지 못한다. 트래픽 패턴이 요일별로 크게 다르면
+#         `offset 1w` 기준 비교로 바꾼다 (docs/OBSERVABILITY_DATA_PIPELINE.md 6장).
+groups:
+  - name: nebula.anomaly.recording
+    interval: 1m
+    rules:
+      - record: service:requests:zscore1d
+        expr: |
+          (service:requests:rate5m - avg_over_time(service:requests:rate5m[1d]))
+          / (stddev_over_time(service:requests:rate5m[1d]) > 0)
+      - record: service:error_ratio:zscore1d
+        expr: |
+          (service:error_ratio:rate5m - avg_over_time(service:error_ratio:rate5m[1d]))
+          / (stddev_over_time(service:error_ratio:rate5m[1d]) > 0)
+      - record: cluster:cpu_utilization:zscore1d
+        expr: |
+          (cluster:cpu_utilization:ratio - avg_over_time(cluster:cpu_utilization:ratio[1d]))
+          / (stddev_over_time(cluster:cpu_utilization:ratio[1d]) > 0)
+      - record: service:log_records:rate5m
+        expr: sum by (cluster, service, level) (rate(nebula_log_records_total[5m]))
+      - record: service:error_logs:zscore1d
+        expr: |
+          (
+            sum by (cluster, service) (service:log_records:rate5m{level=~"ERROR|FATAL"})
+            - avg_over_time(sum by (cluster, service) (service:log_records:rate5m{level=~"ERROR|FATAL"})[1d:5m])
+          )
+          / (stddev_over_time(sum by (cluster, service) (service:log_records:rate5m{level=~"ERROR|FATAL"})[1d:5m]) > 0)
+
+  # 유휴 리소스 점수 (0=완전 활용, 1=전부 유휴). requests 대비 1일 평균 사용률 기반
+  - name: nebula.efficiency.recording
+    interval: 5m
+    rules:
+      - record: namespace:idle_resource_score:ratio1d
+        expr: |
+          clamp(
+            1 - (
+              avg_over_time(namespace:cpu_usage_vs_request:ratio[1d])
+              + avg_over_time(namespace:memory_usage_vs_request:ratio[1d])
+            ) / 2,
+            0, 1
+          )
+      - record: pod:cpu_usage_vs_request:avg1d
+        expr: avg_over_time(pod:cpu_usage_vs_request:ratio[1d])
+
+  - name: nebula.anomaly.alerts
+    rules:
+      - alert: TrafficAnomaly
+        expr: abs(service:requests:zscore1d) > 3 and service:requests:rate5m > 1
+        for: 15m
+        labels:
+          severity: info
+          team: service-owner
+        annotations:
+          summary: "{{ $labels.service_name }} 트래픽 이상 (z={{ $value | humanize }})"
+          description: "급증(외부 유입/봇) 또는 급감(상위 장애/라우팅 문제) 가능성."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#trafficanomaly
+
+      - alert: ErrorRatioAnomaly
+        expr: service:error_ratio:zscore1d > 3 and service:error_ratio:rate5m > 0.01
+        for: 10m
+        labels:
+          severity: warning
+          team: service-owner
+        annotations:
+          summary: "{{ $labels.service_name }} 에러율 이상 증가 (z={{ $value | humanize }})"
+          description: "배포 직후라면 롤백 판단 근거. Argo Rollouts 분석(k8s/argo-rollouts)과 동일 지표."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#errorratioanomaly
+
+      - alert: ErrorLogSpike
+        expr: |
+          service:error_logs:zscore1d > 3
+          and on (cluster, service)
+          sum by (cluster, service) (service:log_records:rate5m{level=~"ERROR|FATAL"}) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+          team: service-owner
+        annotations:
+          summary: "{{ $labels.service }} 에러 로그 급증 (z={{ $value | humanize }})"
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#errorlogspike
+
+      - alert: IdleResourceHigh
+        expr: |
+          namespace:idle_resource_score:ratio1d > 0.8
+          and on (cluster, namespace) namespace:cpu_requests:sum > 1
+        for: 6h
+        labels:
+          severity: info
+          team: platform
+        annotations:
+          summary: "{{ $labels.namespace }} 유휴 점수 {{ $value | humanizePercentage }} — requests 다운사이징 후보"
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#idleresourcehigh

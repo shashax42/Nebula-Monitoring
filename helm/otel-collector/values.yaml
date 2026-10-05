@@ -1,223 +1,1254 @@
-# Default values for otel-collector
-replicaCount: 2
+# ==========================================================================
+# Nebula OpenTelemetry Collector
+#
+# 3-tier 구성 (자세한 설계는 docs/OBSERVABILITY_DATA_PIPELINE.md)
+#
+#   agent   (DaemonSet)  : 노드 로컬 수집 + 1차 정제
+#                          - 컨테이너 stdout/stderr 로그 (filelog)
+#                          - kubelet / cAdvisor / 어노테이션 파드 메트릭 (노드 로컬 scrape)
+#                          - 앱 OTLP (traces/metrics/logs) 수신
+#                          - k8s 메타데이터 부착, PII 마스킹, 노이즈 제거
+#   gateway (Deployment) : 2차 정제 + 가공 + AWS 내보내기 (IRSA 보유 유일 컴포넌트)
+#                          - spanmetrics/servicegraph (트레이스 → RED 메트릭)
+#                          - count (로그 → 로그량 메트릭)
+#                          - tail sampling (에러/지연 트레이스 100% 보존)
+#                          - AMP / X-Ray / CloudWatch Logs 전송
+#   cluster (Deployment, replicas=1) : 클러스터 단위 단일 수집
+#                          - kube-state-metrics, API server, k8s Events
+#
+# 컬렉터 설정은 Helm 템플릿 문법 대신 ${env:VAR} 로 환경값을 주입한다.
+# (같은 설정 파일을 docker 로 그대로 검증할 수 있도록 하기 위함: scripts/validate.sh)
+# Prometheus 설정 안의 '$' 는 컬렉터 env 치환과 충돌하므로 '$$' 로 이스케이프한다.
+# ==========================================================================
 
-image:
-  repository: otel/opentelemetry-collector-contrib
-  pullPolicy: IfNotPresent
-  tag: "0.91.0"
-
-imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
-serviceAccount:
-  create: true
-  annotations:
-    # This will be populated by Terraform output
-    eks.amazonaws.com/role-arn: ""
-  name: "otel-collector"
+image:
+  repository: otel/opentelemetry-collector-contrib
+  tag: "0.162.0"
+  pullPolicy: IfNotPresent
 
-podAnnotations:
-  prometheus.io/scrape: "true"
-  prometheus.io/port: "8888"
-  prometheus.io/path: "/metrics"
+imagePullSecrets: []
 
-podSecurityContext:
-  runAsNonRoot: true
-  runAsUser: 1000
-  fsGroup: 1000
-
-securityContext:
-  capabilities:
-    drop:
-    - ALL
-  readOnlyRootFilesystem: true
-  runAsNonRoot: true
-  runAsUser: 1000
-
-service:
-  type: ClusterIP
-  ports:
-    otlp-grpc:
-      port: 4317
-      targetPort: 4317
-      protocol: TCP
-    otlp-http:
-      port: 4318
-      targetPort: 4318
-      protocol: TCP
-    metrics:
-      port: 8888
-      targetPort: 8888
-      protocol: TCP
-    prometheus:
-      port: 9090
-      targetPort: 9090
-      protocol: TCP
-
-resources:
-  limits:
-    cpu: 1000m
-    memory: 2Gi
-  requests:
-    cpu: 200m
-    memory: 512Mi
-
-autoscaling:
-  enabled: true
-  minReplicas: 2
-  maxReplicas: 10
-  targetCPUUtilizationPercentage: 80
-  targetMemoryUtilizationPercentage: 80
-
-nodeSelector: {}
-
-tolerations: []
-
-affinity:
-  podAntiAffinity:
-    preferredDuringSchedulingIgnoredDuringExecution:
-    - weight: 100
-      podAffinityTerm:
-        labelSelector:
-          matchExpressions:
-          - key: app.kubernetes.io/name
-            operator: In
-            values:
-            - otel-collector
-        topologyKey: kubernetes.io/hostname
-
-# Environment Configuration
-environment: "dev"  # Override per environment: dev/staging/prod
-clusterName: "nebula-eks-dev"  # Override per environment
-
-# AWS Configuration
-aws:
-  region: "ap-northeast-2"
-  amp:
-    workspaceId: ""  # Will be populated from Terraform
-    endpoint: ""     # Will be populated from Terraform
-  cloudwatch:
-    namespace: "Nebula/Application"
-    logGroup: ""  # Will be populated from Terraform output
-    logStreamPrefix: "otel"
-  xray:
+# --------------------------------------------------------------------------
+# 전역 값 (Terraform output 으로 주입)
+# --------------------------------------------------------------------------
+global:
+  clusterName: "nebula-eks-dev"
+  environment: "dev"
+  aws:
     region: "ap-northeast-2"
+    # terraform output -raw amp_remote_write_url
+    ampRemoteWriteUrl: ""
+    cloudwatch:
+      # 비워두면 /aws/eks/<clusterName>/application, /aws/eks/<clusterName>/events
+      applicationLogGroup: ""
+      eventsLogGroup: ""
 
-# OTEL Collector Configuration
-config:
-  receivers:
-    otlp:
-      protocols:
-        grpc:
-          endpoint: 0.0.0.0:4317
-        http:
-          endpoint: 0.0.0.0:4318
-    prometheus:
-      config:
-        scrape_configs:
-          - job_name: 'kubernetes-pods'
-            kubernetes_sd_configs:
-              - role: pod
-            relabel_configs:
-              - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
-                action: keep
-                regex: true
-              - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
-                action: replace
-                target_label: __metrics_path__
-                regex: (.+)
-              - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
-                action: replace
-                regex: ([^:]+)(?::\d+)?;(\d+)
-                replacement: $1:$2
-                target_label: __address__
-              - action: labelmap
-                regex: __meta_kubernetes_pod_label_(.+)
-              - source_labels: [__meta_kubernetes_namespace]
-                action: replace
-                target_label: kubernetes_namespace
-              - source_labels: [__meta_kubernetes_pod_name]
-                action: replace
-                target_label: kubernetes_pod_name
+# --------------------------------------------------------------------------
+# 정제/가공 튜닝 값 (환경별 values-<env>.yaml 에서 덮어쓴다)
+# --------------------------------------------------------------------------
+pipeline:
+  logs:
+    # 이 값 미만 severity_number 로그는 버린다.
+    # 1=TRACE 5=DEBUG 9=INFO 13=WARN 17=ERROR 21=FATAL  (dev 는 5 로 낮춰 DEBUG 까지 수집)
+    minSeverityNumber: 9
+  traces:
+    # tail sampling: 에러/지연 트레이스는 항상 보존, 나머지는 아래 비율로 보존
+    baselineSamplingPercent: 10
+    latencyThresholdMs: 1000
+    criticalServicesRegex: "^(api-gateway|auth-service|payment-service)$"
+    criticalSamplingPercent: 50
+  sli:
+    # CloudWatch SlowRequests 기준. "P95 < 1s" SLO 는 "1s 초과 요청 비율 < 5%" 와 동치
+    latencyThresholdMs: 1000
 
-  processors:
-    batch:
-      timeout: 10s
-      send_batch_size: 1024
-    memory_limiter:
-      check_interval: 1s
-      limit_mib: 1536
-      spike_limit_mib: 512
-    resource:
-      attributes:
-        - key: cluster.name
-          value: "${CLUSTER_NAME}"
-          action: insert
-        - key: deployment.environment
-          value: "${ENVIRONMENT}"
-          action: insert
-    attributes:
-      actions:
-        - key: http.user_agent
-          action: delete
-    filter:
-      metrics:
-        exclude:
-          match_type: regexp
-          metric_names:
-            - ".*_bucket"
-            - ".*_created"
+# ==========================================================================
+# agent (DaemonSet)
+# ==========================================================================
+agent:
+  enabled: true
+  kind: DaemonSet
 
-  exporters:
-    prometheusremotewrite:
-      endpoint: "${AWS_AMP_ENDPOINT}/api/v1/remote_write"
-      auth:
-        authenticator: sigv4auth
-      resource_to_telemetry_conversion:
-        enabled: true
-    awscloudwatchlogs:
-      region: "${AWS_REGION}"
-      log_group_name: "${CLOUDWATCH_LOG_GROUP}"
-      log_stream_name: "${CLOUDWATCH_LOG_STREAM}"
-    awsxray:
-      region: "${AWS_REGION}"
-      no_verify_ssl: false
-      local_mode: false
-    logging:
-      loglevel: info
+  serviceAccount:
+    create: true
+    name: "otel-collector-agent"
+    annotations: {}
 
-  extensions:
-    health_check:
-      endpoint: 0.0.0.0:13133
-    pprof:
-      endpoint: 0.0.0.0:1777
-    zpages:
-      endpoint: 0.0.0.0:55679
-    sigv4auth:
-      region: "${AWS_REGION}"
-      service: "aps"
-
+  # 앱이 OTLP 를 보내는 엔드포인트.
+  # internalTrafficPolicy=Local 이라 항상 같은 노드의 agent 로 전달된다.
+  #   OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector.monitoring.svc:4317
   service:
-    extensions: [health_check, pprof, zpages, sigv4auth]
-    pipelines:
-      metrics:
-        receivers: [otlp, prometheus]
-        processors: [memory_limiter, resource, filter, batch]
-        exporters: [prometheusremotewrite, logging]
-      traces:
-        receivers: [otlp]
-        processors: [memory_limiter, resource, attributes, batch]
-        exporters: [awsxray, logging]
-      logs:
-        receivers: [otlp]
-        processors: [memory_limiter, resource, batch]
-        exporters: [awscloudwatchlogs, logging]
+    enabled: true
+    nameSuffix: ""            # "" → <fullname> (기본 otel-collector)
+    internalTrafficPolicy: Local
 
-# ServiceMonitor for Prometheus Operator (optional)
-serviceMonitor:
-  enabled: false  # Enable only if Prometheus Operator is installed
-  interval: 30s
-  scrapeTimeout: 10s
-  labels:
-    release: prometheus
+  # /var/log/pods 는 root 소유(0640)라 root 로 읽어야 한다. capability 는 모두 제거.
+  podSecurityContext:
+    runAsUser: 0
+    runAsGroup: 0
+  securityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  priorityClassName: system-node-critical
+  tolerations:
+    - operator: Exists
+  nodeSelector: {}
+  affinity: {}
+
+  # filelog 체크포인트(재시작 시 중복/유실 방지) 저장 위치
+  hostPaths:
+    varLogPods: /var/log/pods
+    checkpoint: /var/lib/otelcol/agent
+
+  extraEnv: []
+
+  config:
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+      file_storage:
+        directory: /var/lib/otelcol/agent
+        create_directory: true
+
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+      # ---------------- 로그: 컨테이너 stdout/stderr ----------------
+      file_log:
+        include:
+          - /var/log/pods/*/*/*.log
+        exclude:
+          # 컬렉터 자신의 로그는 수집하지 않는다 (피드백 루프 방지, 템플릿이 경로를 계산)
+          - ${env:SELF_LOG_GLOB}
+        start_at: end
+        include_file_path: true
+        include_file_name: false
+        storage: file_storage
+        retry_on_failure:
+          enabled: true
+        operators:
+          # containerd/CRI-O/docker 포맷 자동 판별 + 파일 경로에서
+          # k8s.namespace.name / k8s.pod.name / k8s.pod.uid / k8s.container.name 추출
+          - type: container
+            id: container-parser
+
+      # ---------------- 메트릭: 노드 로컬 scrape ----------------
+      # 각 agent 는 자기 노드의 대상만 scrape 한다 (selectors 로 nodeName 필터).
+      # → DaemonSet 이어도 중복 수집이 없다.
+      prometheus:
+        config:
+          global:
+            scrape_interval: 30s
+            scrape_timeout: 10s
+          scrape_configs:
+            # kubelet: PVC 사용량, 실행 파드 수
+            - job_name: kubelet
+              scheme: https
+              tls_config:
+                ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                insecure_skip_verify: true
+              authorization:
+                credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+              kubernetes_sd_configs:
+                - role: node
+                  selectors:
+                    - role: node
+                      field: metadata.name=${env:K8S_NODE_NAME}
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_node_name]
+                  target_label: node
+                - source_labels: [__meta_kubernetes_node_address_InternalIP]
+                  target_label: __address__
+                  replacement: $$1:10250
+              metric_relabel_configs:
+                - source_labels: [__name__]
+                  action: keep
+                  regex: kubelet_volume_stats_(capacity|available|used)_bytes|kubelet_volume_stats_inodes(_used)?|kubelet_running_pods|kubelet_running_containers
+
+            # kubelet resource 엔드포인트: 노드/파드 CPU·메모리 (node-exporter 대체)
+            - job_name: kubelet-resource
+              scheme: https
+              metrics_path: /metrics/resource
+              tls_config:
+                ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                insecure_skip_verify: true
+              authorization:
+                credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+              kubernetes_sd_configs:
+                - role: node
+                  selectors:
+                    - role: node
+                      field: metadata.name=${env:K8S_NODE_NAME}
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_node_name]
+                  target_label: node
+                - source_labels: [__meta_kubernetes_node_address_InternalIP]
+                  target_label: __address__
+                  replacement: $$1:10250
+              metric_relabel_configs:
+                - source_labels: [__name__]
+                  action: keep
+                  regex: node_cpu_usage_seconds_total|node_memory_working_set_bytes
+
+            # cAdvisor: 컨테이너 CPU/메모리/네트워크/스로틀링/OOM
+            - job_name: cadvisor
+              scheme: https
+              metrics_path: /metrics/cadvisor
+              tls_config:
+                ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                insecure_skip_verify: true
+              authorization:
+                credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+              kubernetes_sd_configs:
+                - role: node
+                  selectors:
+                    - role: node
+                      field: metadata.name=${env:K8S_NODE_NAME}
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_node_name]
+                  target_label: node
+                - source_labels: [__meta_kubernetes_node_address_InternalIP]
+                  target_label: __address__
+                  replacement: $$1:10250
+              metric_relabel_configs:
+                # 1) 허용 목록 (대시보드/규칙에서 쓰는 것만)
+                - source_labels: [__name__]
+                  action: keep
+                  regex: container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_memory_rss|container_network_(receive|transmit)_bytes_total|container_cpu_cfs_(throttled_)?periods_total|container_oom_events_total
+                # 2) 파드 sandbox(pause) / 집계용 cgroup 시리즈 제거 (네트워크는 pod 단위라 유지)
+                - source_labels: [__name__, container]
+                  action: drop
+                  regex: container_(cpu|memory|oom).*;(POD|)
+                # 3) 고카디널리티 라벨 제거
+                - action: labeldrop
+                  regex: id|name|image
+
+            # 어노테이션 기반 앱 메트릭 (prometheus.io/scrape: "true")
+            - job_name: kubernetes-pods
+              kubernetes_sd_configs:
+                - role: pod
+                  selectors:
+                    - role: pod
+                      field: spec.nodeName=${env:K8S_NODE_NAME}
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+                  action: keep
+                  regex: "true"
+                - source_labels: [__meta_kubernetes_pod_phase]
+                  action: drop
+                  regex: Pending|Succeeded|Failed
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scheme]
+                  action: replace
+                  target_label: __scheme__
+                  regex: (https?)
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+                  action: replace
+                  target_label: __metrics_path__
+                  regex: (.+)
+                - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+                  action: replace
+                  regex: ([^:]+)(?::\d+)?;(\d+)
+                  replacement: $$1:$$2
+                  target_label: __address__
+                # 표준 라벨만 명시적으로 부여 (pod 라벨 전체 labelmap 금지: pod-template-hash 등 카디널리티 폭증)
+                - source_labels: [__meta_kubernetes_namespace]
+                  target_label: namespace
+                - source_labels: [__meta_kubernetes_pod_name]
+                  target_label: pod
+                - source_labels: [__meta_kubernetes_pod_container_name]
+                  target_label: container
+                - source_labels: [__meta_kubernetes_pod_node_name]
+                  target_label: node
+                - source_labels: [__meta_kubernetes_pod_label_app]
+                  target_label: service
+                - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+                  regex: (.+)
+                  target_label: service
+                - source_labels: [__meta_kubernetes_pod_label_version]
+                  target_label: version
+                - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_version]
+                  regex: (.+)
+                  target_label: version
+              metric_relabel_configs:
+                # 런타임 노이즈 / 미사용 시리즈 제거
+                - source_labels: [__name__]
+                  action: drop
+                  regex: go_.*|process_.*|promhttp_.*|.*_created
+
+            # 컬렉터 자체 텔레메트리
+            - job_name: otelcol
+              static_configs:
+                - targets: ["${env:POD_IP}:8888"]
+                  labels:
+                    component: agent
+                    node: ${env:K8S_NODE_NAME}
+              metric_relabel_configs:
+                - source_labels: [__name__]
+                  action: keep
+                  regex: otelcol_.*
+
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 80
+        spike_limit_percentage: 20
+
+      batch:
+        timeout: 5s
+        send_batch_size: 1024
+        send_batch_max_size: 2048
+
+      # 같은 노드의 파드만 watch 해서 메타데이터 부착
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        filter:
+          node_from_env_var: K8S_NODE_NAME
+        pod_association:
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.uid
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.ip
+          - sources:
+              - from: connection
+        extract:
+          metadata:
+            - k8s.namespace.name
+            - k8s.pod.name
+            - k8s.pod.uid
+            - k8s.node.name
+            - k8s.deployment.name
+            - k8s.statefulset.name
+            - k8s.daemonset.name
+            - k8s.cronjob.name
+            - k8s.job.name
+          labels:
+            - tag_name: nebula.label.name
+              key: app.kubernetes.io/name
+              from: pod
+            - tag_name: nebula.label.app
+              key: app
+              from: pod
+            - tag_name: service.version
+              key: app.kubernetes.io/version
+              from: pod
+
+      resource/cluster:
+        attributes:
+          - key: k8s.cluster.name
+            value: ${env:CLUSTER_NAME}
+            action: upsert
+          - key: deployment.environment
+            value: ${env:ENVIRONMENT}
+            action: insert
+          - key: cloud.region
+            value: ${env:AWS_REGION}
+            action: insert
+
+      # service.name 표준화: SDK 값 > app.kubernetes.io/name > app > 워크로드명 > 컨테이너명
+      transform/service-name:
+        error_mode: ignore
+        log_statements: &serviceNameStatements
+          - context: resource
+            statements:
+              - delete_key(attributes, "service.name") where attributes["service.name"] != nil and IsMatch(attributes["service.name"], "^unknown_service")
+              - set(attributes["service.name"], attributes["nebula.label.name"]) where attributes["service.name"] == nil
+              - set(attributes["service.name"], attributes["nebula.label.app"]) where attributes["service.name"] == nil
+              - set(attributes["service.name"], attributes["k8s.deployment.name"]) where attributes["service.name"] == nil
+              - set(attributes["service.name"], attributes["k8s.statefulset.name"]) where attributes["service.name"] == nil
+              - set(attributes["service.name"], attributes["k8s.daemonset.name"]) where attributes["service.name"] == nil
+              - set(attributes["service.name"], attributes["k8s.container.name"]) where attributes["service.name"] == nil
+              - delete_matching_keys(attributes, "^nebula\\.label\\.")
+        trace_statements: *serviceNameStatements
+        metric_statements: *serviceNameStatements
+
+      # 로그 구조화: JSON 파싱 → message/level/trace_id 를 OTel 표준 필드로 승격
+      transform/logs-parse:
+        error_mode: ignore
+        log_statements:
+          - context: log
+            statements:
+              # JSON 로그면 attributes 로 펼친다
+              - merge_maps(attributes, ParseJSON(body), "upsert") where IsString(body) and IsMatch(body, "^\\s*\\{")
+              # 메시지 본문
+              - set(body, attributes["message"]) where attributes["message"] != nil
+              - set(body, attributes["msg"]) where attributes["msg"] != nil
+              - delete_key(attributes, "message")
+              - delete_key(attributes, "msg")
+              # 심각도 (level / severity / log.level 키 지원)
+              - set(severity_text, ToUpperCase(attributes["level"])) where severity_number == 0 and IsString(attributes["level"])
+              - set(severity_text, ToUpperCase(attributes["severity"])) where severity_number == 0 and IsString(attributes["severity"])
+              - set(severity_text, ToUpperCase(attributes["log.level"])) where severity_number == 0 and IsString(attributes["log.level"])
+              - delete_matching_keys(attributes, "^(level|severity|log\\.level)$")
+              # 비구조화(plain text) 로그는 본문 키워드로 추정
+              - set(severity_text, "ERROR") where severity_number == 0 and severity_text == "" and IsString(body) and IsMatch(body, "(?i)\\b(error|exception|fatal|panic)\\b")
+              - set(severity_text, "WARN") where severity_number == 0 and severity_text == "" and IsString(body) and IsMatch(body, "(?i)\\bwarn(ing)?\\b")
+              - set(severity_text, "INFO") where severity_number == 0 and severity_text == ""
+              - set(severity_text, "WARN") where severity_text == "WARNING"
+              - set(severity_text, "ERROR") where severity_text == "ERR"
+              - set(severity_text, "FATAL") where IsMatch(severity_text, "^(CRITICAL|PANIC|EMERGENCY)$")
+              - set(severity_number, SEVERITY_NUMBER_TRACE) where severity_number == 0 and severity_text == "TRACE"
+              - set(severity_number, SEVERITY_NUMBER_DEBUG) where severity_number == 0 and severity_text == "DEBUG"
+              - set(severity_number, SEVERITY_NUMBER_INFO) where severity_number == 0 and severity_text == "INFO"
+              - set(severity_number, SEVERITY_NUMBER_WARN) where severity_number == 0 and severity_text == "WARN"
+              - set(severity_number, SEVERITY_NUMBER_ERROR) where severity_number == 0 and severity_text == "ERROR"
+              - set(severity_number, SEVERITY_NUMBER_FATAL) where severity_number == 0 and severity_text == "FATAL"
+              # 로그 ↔ 트레이스 연결
+              - set(trace_id.string, attributes["trace_id"]) where IsString(attributes["trace_id"]) and IsMatch(attributes["trace_id"], "^[0-9a-f]{32}$")
+              - set(trace_id.string, attributes["traceId"]) where IsString(attributes["traceId"]) and IsMatch(attributes["traceId"], "^[0-9a-f]{32}$")
+              - set(span_id.string, attributes["span_id"]) where IsString(attributes["span_id"]) and IsMatch(attributes["span_id"], "^[0-9a-f]{16}$")
+              - set(span_id.string, attributes["spanId"]) where IsString(attributes["spanId"]) and IsMatch(attributes["spanId"], "^[0-9a-f]{16}$")
+              - delete_matching_keys(attributes, "^(trace_id|traceId|span_id|spanId|logtag|log\\.file\\.path)$")
+
+      # 노이즈 제거
+      filter/logs-noise:
+        error_mode: ignore
+        logs:
+          log_record:
+            - 'severity_number > 0 and severity_number < ${env:LOG_MIN_SEVERITY_NUMBER}'
+            - 'IsString(body) and Len(body) == 0'
+            - 'IsString(body) and IsMatch(body, "kube-probe/|ELB-HealthChecker")'
+            - 'IsString(body) and IsMatch(body, "\"(GET|HEAD) /(health|healthz|healthcheck|ready|readyz|live|livez|ping|metrics)[ ?\"]")'
+
+      # 개인정보/비밀값 마스킹 + 크기 제한
+      transform/logs-redact:
+        error_mode: ignore
+        log_statements:
+          - context: log
+            statements:
+              - replace_pattern(body, "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "<email>") where IsString(body)
+              - replace_pattern(body, "\\b01[016789][- ]?\\d{3,4}[- ]?\\d{4}\\b", "<phone>") where IsString(body)
+              - replace_pattern(body, "\\b\\d{6}[- ]?[1-4]\\d{6}\\b", "<rrn>") where IsString(body)
+              - replace_pattern(body, "\\b\\d{4}[- ]\\d{4}[- ]\\d{4}[- ]\\d{4}\\b", "<card>") where IsString(body)
+              - replace_pattern(body, "eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+", "<jwt>") where IsString(body)
+              - replace_pattern(body, "(?i)(bearer|basic)\\s+[A-Za-z0-9._~+/=-]+", "$$1 <redacted>") where IsString(body)
+              - replace_pattern(body, "(?i)\\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key)(\"?\\s*[:=]\\s*\"?)[^\\s\"&,}]+", "$$1$$2<redacted>") where IsString(body)
+              - replace_all_patterns(attributes, "value", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "<email>")
+              - replace_all_patterns(attributes, "value", "eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+", "<jwt>")
+              - delete_matching_keys(attributes, "(?i)^(password|passwd|secret|token|authorization|cookie|set-cookie|api[_-]?key)$")
+              - set(body, Concat([Substring(body, 0, 16384), "...<truncated>"], "")) where IsString(body) and Len(body) > 16384
+              - truncate_all(attributes, 4096)
+              - limit(attributes, 64, [])
+
+    exporters:
+      otlp_grpc/gateway:
+        endpoint: ${env:GATEWAY_OTLP_ENDPOINT}
+        tls:
+          insecure: true
+        compression: gzip
+        sending_queue:
+          enabled: true
+          queue_size: 5000
+        retry_on_failure:
+          enabled: true
+          max_elapsed_time: 300s
+
+      # 같은 trace 의 span 은 같은 gateway 로 → tail sampling / servicegraph 정확도 보장
+      load_balancing/gateway:
+        routing_key: traceID
+        protocol:
+          otlp:
+            tls:
+              insecure: true
+            compression: gzip
+            sending_queue:
+              enabled: true
+              queue_size: 5000
+            retry_on_failure:
+              enabled: true
+        resolver:
+          dns:
+            hostname: ${env:GATEWAY_HEADLESS_HOST}
+            port: "4317"
+
+    service:
+      extensions: [health_check, file_storage]
+      telemetry:
+        logs:
+          level: info
+          encoding: json
+        metrics:
+          level: normal
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 0.0.0.0
+                    port: 8888
+      pipelines:
+        logs:
+          receivers: [file_log, otlp]
+          processors:
+            - memory_limiter
+            - k8sattributes
+            - resource/cluster
+            - transform/service-name
+            - transform/logs-parse
+            - filter/logs-noise
+            - transform/logs-redact
+            - batch
+          exporters: [otlp_grpc/gateway]
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, resource/cluster, transform/service-name, batch]
+          exporters: [load_balancing/gateway]
+        metrics/otlp:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, resource/cluster, transform/service-name, batch]
+          exporters: [otlp_grpc/gateway]
+        metrics/scrape:
+          receivers: [prometheus]
+          processors: [memory_limiter, batch]
+          exporters: [otlp_grpc/gateway]
+
+# ==========================================================================
+# gateway (Deployment)
+# ==========================================================================
+gateway:
+  enabled: true
+  kind: Deployment
+  replicaCount: 2
+
+  # IRSA 역할의 trust policy 가 system:serviceaccount:monitoring:otel-collector 를 기대한다.
+  serviceAccount:
+    create: true
+    name: "otel-collector"
+    annotations:
+      # terraform output -raw target_otel_role_arn (또는 otel_collector_role_arn)
+      eks.amazonaws.com/role-arn: ""
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+  securityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 75
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  tolerations: []
+  nodeSelector: {}
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: gateway
+
+  extraEnv: []
+
+  config:
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+      sigv4auth:
+        region: ${env:AWS_REGION}
+        service: aps
+
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      prometheus/self:
+        config:
+          scrape_configs:
+            - job_name: otelcol
+              scrape_interval: 30s
+              static_configs:
+                - targets: ["${env:POD_IP}:8888"]
+                  labels:
+                    component: gateway
+              metric_relabel_configs:
+                - source_labels: [__name__]
+                  action: keep
+                  regex: otelcol_.*
+
+    connectors:
+      # [가공] 트레이스 → 서비스/라우트 단위 RED 메트릭 (샘플링 전 100% 트래픽 기준)
+      span_metrics:
+        namespace: traces.span.metrics
+        histogram:
+          unit: s
+          explicit:
+            buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s]
+        dimensions:
+          - name: http.route
+          - name: http.request.method
+          - name: http.response.status_code
+          - name: k8s.namespace.name
+        resource_metrics_key_attributes: [service.name, k8s.namespace.name, deployment.environment]
+        aggregation_cardinality_limit: 5000
+        metrics_flush_interval: 15s
+        metrics_expiration: 5m
+
+      # [가공] 테넌트 단위 RED + DB 시간 (Noisy Neighbor / 테넌트 SLO / 비용 배분)
+      # 라우트 차원과 분리해 카디널리티를 (service × tenant × status × db.system) 로 제한한다.
+      span_metrics/tenant:
+        namespace: traces.tenant.metrics
+        histogram:
+          unit: s
+          explicit:
+            buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s]
+        dimensions:
+          - name: tenant.id
+          - name: tenant.tier
+            default: unknown
+          - name: db.system
+        exclude_dimensions: [span.name]
+        resource_metrics_key_attributes: [service.name, deployment.environment]
+        aggregation_cardinality_limit: 10000
+        metrics_flush_interval: 15s
+        metrics_expiration: 10m
+
+      # [가공] 서비스 간 호출 그래프 (client→server edge)
+      service_graph:
+        latency_histogram_buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s]
+        dimensions: [k8s.namespace.name]
+        store:
+          ttl: 5s
+          max_items: 5000
+
+      # [가공] 로그 → 서비스/테넌트/레벨별 로그 건수
+      count/logs:
+        logs:
+          nebula.log.records:
+            description: Log records after refinement
+            attributes:
+              - key: service
+                default_value: unknown
+              - key: namespace
+                default_value: unknown
+              - key: level
+                default_value: UNSPECIFIED
+              - key: tenant_id
+                default_value: none
+
+      # [가공] 트레이스 → 비즈니스 논리 오류 (HTTP 200 인데 결제 실패)
+      count/business:
+        spans:
+          nebula.payment.logical_errors:
+            description: Payment failed although the HTTP response was 2xx
+            conditions:
+              - 'attributes["payment.outcome"] == "failure" and attributes["http.response.status_code"] != nil and attributes["http.response.status_code"] < 300'
+            attributes:
+              - key: service.name
+              - key: payment.pg
+                default_value: unknown
+              - key: tenant.id
+                default_value: none
+
+      # [가공] CloudWatch 경보용 SLI 카운터 (서버 스팬 기준, 저카디널리티)
+      count/sli:
+        spans:
+          nebula.sli.requests:
+            conditions: ['kind == SPAN_KIND_SERVER']
+            attributes: [{key: service.name}]
+          nebula.sli.errors:
+            conditions: ['kind == SPAN_KIND_SERVER and status.code == STATUS_CODE_ERROR']
+            attributes: [{key: service.name}]
+          nebula.sli.slow_requests:
+            conditions: ['kind == SPAN_KIND_SERVER and (end_time_unix_nano - start_time_unix_nano) / 1000000 > ${env:SLI_LATENCY_THRESHOLD_MS}']
+            attributes: [{key: service.name}]
+
+      forward/sampling: {}
+      forward/tenant: {}
+
+      # [라우팅] 감사/결제 로그는 장기보존(7년 S3 아카이브) 그룹, k8s 이벤트는 이벤트 그룹
+      # 고객 전용 계정/리전 분리가 필요하면 여기에 tenant_id 조건 + 전용 exporter 를 추가한다.
+      routing/logs:
+        default_pipelines: [logs/app]
+        table:
+          - context: resource
+            condition: attributes["nebula.log.type"] == "k8s-event"
+            pipelines: [logs/events]
+          - context: log
+            condition: attributes["log.type"] == "audit" or attributes["event.domain"] == "payment"
+            pipelines: [logs/audit]
+
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 80
+        spike_limit_percentage: 20
+
+      batch:
+        timeout: 5s
+        send_batch_size: 2048
+        send_batch_max_size: 4096
+
+      # PRW 는 delta 합계를 받지 않으므로 count 커넥터 출력은 누적값으로 변환
+      delta_to_cumulative:
+        max_stale: 10m
+
+      # ---------------- 트레이스 정제 ----------------
+      filter/traces-noise:
+        error_mode: ignore
+        traces:
+          span:
+            - 'IsMatch(attributes["url.path"], "^/(health|healthz|healthcheck|ready|readyz|live|livez|ping|metrics)$")'
+            - 'IsMatch(attributes["http.route"], "^/(health|healthz|healthcheck|ready|readyz|live|livez|ping|metrics)$")'
+            - 'IsMatch(attributes["http.target"], "^/(health|healthz|healthcheck|ready|readyz|live|livez|ping|metrics)$")'
+            - 'IsMatch(attributes["user_agent.original"], "kube-probe|ELB-HealthChecker")'
+
+      # 테넌트 라벨링: span 속성 > 캡처된 x-tenant-id 헤더 > 리소스 속성 순으로 tenant.id 확정
+      transform/tenant:
+        error_mode: ignore
+        trace_statements:
+          - context: span
+            statements:
+              - set(attributes["tenant.id"], attributes["tenant_id"]) where attributes["tenant.id"] == nil and attributes["tenant_id"] != nil
+              - set(attributes["tenant.id"], attributes["http.request.header.x-tenant-id"][0]) where attributes["tenant.id"] == nil and attributes["http.request.header.x-tenant-id"] != nil
+              - set(attributes["tenant.id"], attributes["http.request.header.x-tenant-id"]) where attributes["tenant.id"] == nil and IsString(attributes["http.request.header.x-tenant-id"])
+              - set(attributes["tenant.id"], resource.attributes["tenant.id"]) where attributes["tenant.id"] == nil and resource.attributes["tenant.id"] != nil
+              - set(attributes["tenant.tier"], resource.attributes["tenant.tier"]) where attributes["tenant.tier"] == nil and resource.attributes["tenant.tier"] != nil
+              - set(attributes["tenant.id"], ToLowerCase(attributes["tenant.id"])) where IsString(attributes["tenant.id"])
+              - delete_key(attributes, "tenant_id")
+
+      transform/traces-redact:
+        error_mode: ignore
+        trace_statements:
+          - context: span
+            statements:
+              - delete_matching_keys(attributes, "(?i)^http\\.request\\.header\\.(authorization|cookie|x-api-key)$")
+              - delete_key(attributes, "http.user_agent")
+              - delete_key(attributes, "user_agent.original")
+              # SQL 리터럴 마스킹 (값 노출 방지, 쿼리 형태는 유지)
+              - replace_pattern(attributes["db.statement"], "'[^']*'", "'?'")
+              - replace_pattern(attributes["db.query.text"], "'[^']*'", "'?'")
+              # URL 쿼리스트링의 민감 파라미터
+              - replace_pattern(attributes["url.full"], "(?i)([?&](token|password|key|secret|code)=)[^&]*", "$$1<redacted>")
+              - replace_pattern(attributes["url.query"], "(?i)((^|&)(token|password|key|secret|code)=)[^&]*", "$$1<redacted>")
+              - truncate_all(attributes, 2048)
+
+      # 테넌트 메트릭 대상: 테넌트가 식별된 서버/컨슈머 스팬 + DB 클라이언트 스팬만
+      filter/tenant-scope:
+        error_mode: ignore
+        traces:
+          span:
+            - 'attributes["tenant.id"] == nil'
+            - 'kind != SPAN_KIND_SERVER and kind != SPAN_KIND_CONSUMER and attributes["db.system"] == nil'
+
+      # 에러/지연/핵심 서비스 트레이스는 보존, 나머지는 baseline 비율로 샘플링
+      tail_sampling:
+        decision_wait: 10s
+        num_traces: 50000
+        expected_new_traces_per_sec: 200
+        policies:
+          - name: keep-errors
+            type: status_code
+            status_code:
+              status_codes: [ERROR]
+          - name: keep-slow
+            type: latency
+            latency:
+              threshold_ms: ${env:TRACE_LATENCY_THRESHOLD_MS}
+          - name: keep-payment-failures
+            type: string_attribute
+            string_attribute:
+              key: payment.outcome
+              values: [failure]
+          - name: critical-services
+            type: and
+            and:
+              and_sub_policy:
+                - name: critical-service-match
+                  type: string_attribute
+                  string_attribute:
+                    key: service.name
+                    values: ["${env:TRACE_CRITICAL_SERVICES_REGEX}"]
+                    enabled_regex_matching: true
+                - name: critical-service-rate
+                  type: probabilistic
+                  probabilistic:
+                    sampling_percentage: ${env:TRACE_CRITICAL_SAMPLING_PERCENT}
+          - name: baseline
+            type: probabilistic
+            probabilistic:
+              sampling_percentage: ${env:TRACE_BASELINE_SAMPLING_PERCENT}
+
+      # ---------------- 메트릭 정제 ----------------
+      filter/metrics-drop:
+        error_mode: ignore
+        metrics:
+          metric:
+            - 'IsMatch(name, "^(go_|promhttp_|process_).*")'
+            - 'IsMatch(name, ".*_created$")'
+
+      transform/metrics-normalize:
+        error_mode: ignore
+        metric_statements:
+          - context: datapoint
+            statements:
+              # OTLP 앱 메트릭에 namespace/pod 라벨 부여 (pod 간 시리즈 충돌 방지)
+              - set(attributes["namespace"], resource.attributes["k8s.namespace.name"]) where attributes["namespace"] == nil and resource.attributes["k8s.namespace.name"] != nil
+              - set(attributes["pod"], resource.attributes["k8s.pod.name"]) where attributes["pod"] == nil and resource.attributes["k8s.pod.name"] != nil
+              # 테넌트 키 통일 (tenant_id / tenantId → tenant.id)
+              - set(attributes["tenant.id"], attributes["tenant_id"]) where attributes["tenant.id"] == nil and attributes["tenant_id"] != nil
+              - set(attributes["tenant.id"], attributes["tenantId"]) where attributes["tenant.id"] == nil and attributes["tenantId"] != nil
+              - delete_matching_keys(attributes, "^(tenant_id|tenantId)$")
+              # 메시지 브로커 리소스 속성 → 라벨 (큐/컨슈머 그룹 단위 Lag 집계)
+              - set(attributes["queue"], resource.attributes["rabbitmq.queue.name"]) where resource.attributes["rabbitmq.queue.name"] != nil
+              - set(attributes["vhost"], resource.attributes["rabbitmq.vhost.name"]) where resource.attributes["rabbitmq.vhost.name"] != nil
+              # 고카디널리티 속성 제거
+              - delete_matching_keys(attributes, "^(net\\.sock\\.peer\\..*|client\\.(address|port)|network\\.peer\\.(address|port)|user_agent\\.original|http\\.client_ip|order\\.id|user\\.id|session\\.id)$")
+
+      # PG 응답 코드 → 실패 원인 카테고리 (카드 한도 초과 vs PG 타임아웃 등을 구분)
+      transform/payment-normalize:
+        error_mode: ignore
+        metric_statements:
+          - context: datapoint
+            conditions:
+              - metric.name == "nebula.payment.requests"
+            statements:
+              - set(attributes["payment.failure.category"], "none") where attributes["payment.outcome"] == "success"
+              - set(attributes["payment.failure.code"], "") where attributes["payment.failure.code"] == nil
+              - set(attributes["payment.failure.category"], "card_limit_exceeded") where attributes["payment.failure.category"] == nil and IsMatch(attributes["payment.failure.code"], "(?i)(LIMIT|EXCEED|한도)")
+              - set(attributes["payment.failure.category"], "insufficient_funds") where attributes["payment.failure.category"] == nil and IsMatch(attributes["payment.failure.code"], "(?i)(INSUFFICIENT|NOT_ENOUGH|BALANCE|잔액)")
+              - set(attributes["payment.failure.category"], "pg_timeout") where attributes["payment.failure.category"] == nil and IsMatch(attributes["payment.failure.code"], "(?i)(TIMEOUT|TIMED_OUT|^408$|^504$)")
+              - set(attributes["payment.failure.category"], "pg_unavailable") where attributes["payment.failure.category"] == nil and IsMatch(attributes["payment.failure.code"], "(?i)(UNAVAILABLE|SYSTEM_ERROR|MAINTENANCE|^50[023]$|점검)")
+              - set(attributes["payment.failure.category"], "fraud_suspected") where attributes["payment.failure.category"] == nil and IsMatch(attributes["payment.failure.code"], "(?i)(FRAUD|RISK|SUSPECT|STOLEN|LOST|도난|분실)")
+              - set(attributes["payment.failure.category"], "invalid_card") where attributes["payment.failure.category"] == nil and IsMatch(attributes["payment.failure.code"], "(?i)(INVALID_CARD|EXPIRED|CARD_NUMBER|유효기간)")
+              - set(attributes["payment.failure.category"], "card_declined") where attributes["payment.failure.category"] == nil and IsMatch(attributes["payment.failure.code"], "(?i)(DECLIN|REJECT|DENIED|NOT_ALLOWED|거절)")
+              - set(attributes["payment.failure.category"], "user_cancelled") where attributes["payment.failure.category"] == nil and IsMatch(attributes["payment.failure.code"], "(?i)(CANCEL|ABORT|취소)")
+              - set(attributes["payment.failure.category"], "other") where attributes["payment.failure.category"] == nil
+
+      # connector 산출 메트릭: gateway replica 간 시리즈 충돌 방지 라벨
+      transform/derived:
+        error_mode: ignore
+        metric_statements:
+          - context: resource
+            statements:
+              - delete_key(attributes, "service.instance.id")
+          - context: datapoint
+            statements:
+              # span_metrics 가 붙이는 프로세스 UUID 라벨 대신 파드명 기반 단일 라벨 사용
+              - delete_key(attributes, "collector.instance.id")
+              - set(attributes["collector"], "${env:POD_NAME}")
+
+      # ---------------- CloudWatch(EMF) 용 SLI/비즈니스 메트릭 ----------------
+      # CloudWatch 커스텀 메트릭은 차원 조합당 과금 → 정해진 메트릭/차원만 통과
+      filter/cloudwatch-keep:
+        error_mode: ignore
+        metrics:
+          metric:
+            - 'not IsMatch(name, "^nebula\\.(sli\\.(requests|errors|slow_requests)|payment\\.requests|payment\\.logical_errors)$")'
+
+      transform/cloudwatch-dims:
+        error_mode: ignore
+        metric_statements:
+          - context: datapoint
+            statements:
+              - set(attributes["Environment"], "${env:ENVIRONMENT}")
+              - set(attributes["Service"], resource.attributes["service.name"]) where resource.attributes["service.name"] != nil
+              - set(attributes["Service"], attributes["service.name"]) where attributes["service.name"] != nil
+              - set(attributes["PaymentPg"], attributes["payment.pg"]) where attributes["payment.pg"] != nil
+              - set(attributes["PaymentMethod"], attributes["payment.method"]) where attributes["payment.method"] != nil
+              - set(attributes["FailureCategory"], attributes["payment.failure.category"]) where attributes["payment.failure.category"] != nil
+              - set(attributes["Outcome"], attributes["payment.outcome"]) where attributes["payment.outcome"] != nil
+          - context: metric
+            statements:
+              - set(name, "Requests") where name == "nebula.sli.requests"
+              - set(name, "Errors") where name == "nebula.sli.errors"
+              - set(name, "SlowRequests") where name == "nebula.sli.slow_requests"
+              - set(name, "PaymentRequests") where name == "nebula.payment.requests"
+              - set(name, "PaymentLogicalErrors") where name == "nebula.payment.logical_errors"
+
+      # ---------------- 로그 가공 ----------------
+      # CloudWatch Logs Insights 에서 바로 필터링할 수 있도록 핵심 필드를 attributes 로 평탄화
+      transform/logs-flatten:
+        error_mode: ignore
+        log_statements:
+          - context: log
+            statements:
+              - set(attributes["service"], resource.attributes["service.name"]) where resource.attributes["service.name"] != nil
+              - set(attributes["namespace"], resource.attributes["k8s.namespace.name"]) where resource.attributes["k8s.namespace.name"] != nil
+              - set(attributes["pod"], resource.attributes["k8s.pod.name"]) where resource.attributes["k8s.pod.name"] != nil
+              - set(attributes["container"], resource.attributes["k8s.container.name"]) where resource.attributes["k8s.container.name"] != nil
+              - set(attributes["level"], severity_text) where severity_text != ""
+              - set(attributes["tenant_id"], attributes["tenant.id"]) where attributes["tenant_id"] == nil and attributes["tenant.id"] != nil
+              - set(attributes["tenant_id"], attributes["tenantId"]) where attributes["tenant_id"] == nil and attributes["tenantId"] != nil
+              - set(attributes["tenant_id"], resource.attributes["tenant.id"]) where attributes["tenant_id"] == nil and resource.attributes["tenant.id"] != nil
+              - delete_matching_keys(attributes, "^(tenant\\.id|tenantId)$")
+
+      # 저장 비용 절감: 평탄화된 리소스 속성은 이벤트마다 중복 저장하지 않는다
+      transform/logs-trim:
+        error_mode: ignore
+        log_statements:
+          - context: resource
+            statements:
+              - keep_keys(attributes, ["k8s.cluster.name", "deployment.environment", "k8s.node.name", "k8s.deployment.name", "service.version"])
+
+    exporters:
+      prometheus_remote_write/amp:
+        endpoint: ${env:AMP_REMOTE_WRITE_URL}
+        auth:
+          authenticator: sigv4auth
+        external_labels:
+          cluster: ${env:CLUSTER_NAME}
+          environment: ${env:ENVIRONMENT}
+        resource_to_telemetry_conversion:
+          enabled: false
+        target_info:
+          enabled: false
+        add_metric_suffixes: true
+        timeout: 30s
+        remote_write_queue:
+          enabled: true
+          queue_size: 10000
+          num_consumers: 5
+        retry_on_failure:
+          enabled: true
+          max_elapsed_time: 300s
+
+      # CloudWatch Alarms(SLA/에러/지연/결제) 가 평가할 메트릭 → Nebula/Application 네임스페이스
+      awsemf:
+        region: ${env:AWS_REGION}
+        namespace: Nebula/Application
+        log_group_name: ${env:CW_LOG_GROUP_EMF}
+        log_stream_name: ${env:POD_NAME}
+        dimension_rollup_option: NoDimensionRollup
+        metric_declarations:
+          - dimensions: [[Environment], [Environment, Service]]
+            metric_name_selectors: ["^Requests$", "^Errors$", "^SlowRequests$"]
+          - dimensions: [[Environment], [Environment, Outcome], [Environment, FailureCategory], [Environment, PaymentPg, Outcome]]
+            metric_name_selectors: ["^PaymentRequests$"]
+          - dimensions: [[Environment], [Environment, PaymentPg]]
+            metric_name_selectors: ["^PaymentLogicalErrors$"]
+
+      awsxray:
+        region: ${env:AWS_REGION}
+        indexed_attributes: [http.route, tenant.id, payment.outcome, deployment.environment]
+
+      awscloudwatchlogs/app:
+        region: ${env:AWS_REGION}
+        log_group_name: ${env:CW_LOG_GROUP_APP}
+        log_stream_name: ${env:POD_NAME}
+        sending_queue:
+          queue_size: 5000
+        retry_on_failure:
+          enabled: true
+
+      awscloudwatchlogs/audit:
+        region: ${env:AWS_REGION}
+        log_group_name: ${env:CW_LOG_GROUP_AUDIT}
+        log_stream_name: ${env:POD_NAME}
+        retry_on_failure:
+          enabled: true
+
+      awscloudwatchlogs/events:
+        region: ${env:AWS_REGION}
+        log_group_name: ${env:CW_LOG_GROUP_EVENTS}
+        log_stream_name: ${env:POD_NAME}
+        retry_on_failure:
+          enabled: true
+
+    service:
+      extensions: [health_check, sigv4auth]
+      telemetry:
+        logs:
+          level: info
+          encoding: json
+        metrics:
+          level: normal
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 0.0.0.0
+                    port: 8888
+      pipelines:
+        # 트레이스: 정제/테넌트 라벨링 → (가공용 100% 복제) → 샘플링 → X-Ray
+        traces/in:
+          receivers: [otlp]
+          processors: [memory_limiter, filter/traces-noise, transform/tenant, transform/traces-redact]
+          exporters: [span_metrics, service_graph, count/business, count/sli, forward/tenant, forward/sampling]
+        traces/tenant:
+          receivers: [forward/tenant]
+          processors: [filter/tenant-scope]
+          exporters: [span_metrics/tenant]
+        traces/out:
+          receivers: [forward/sampling]
+          processors: [tail_sampling, batch]
+          exporters: [awsxray]
+        # 메트릭: 인프라 수집 메트릭 + 앱 OTLP(비즈니스 포함) 메트릭 → AMP
+        metrics:
+          receivers: [otlp, prometheus/self]
+          processors: [memory_limiter, filter/metrics-drop, transform/metrics-normalize, transform/payment-normalize, batch]
+          exporters: [prometheus_remote_write/amp]
+        # 가공 메트릭: span_metrics / service_graph / 로그·비즈니스 카운트 → AMP
+        metrics/derived:
+          receivers: [span_metrics, span_metrics/tenant, service_graph, count/logs, count/business]
+          processors: [delta_to_cumulative, transform/derived, batch]
+          exporters: [prometheus_remote_write/amp]
+        # SLI/결제 메트릭 → CloudWatch (CloudWatch Alarms → SNS)
+        metrics/cloudwatch:
+          receivers: [otlp, count/sli, count/business]
+          processors: [memory_limiter, filter/cloudwatch-keep, transform/metrics-normalize, transform/payment-normalize, transform/cloudwatch-dims, batch]
+          exporters: [awsemf]
+        # 로그: 평탄화 → (카운트 + 라우팅) → CloudWatch Logs
+        logs/in:
+          receivers: [otlp]
+          processors: [memory_limiter, transform/logs-flatten]
+          exporters: [count/logs, routing/logs]
+        logs/app:
+          receivers: [routing/logs]
+          processors: [transform/logs-trim, batch]
+          exporters: [awscloudwatchlogs/app]
+        logs/audit:
+          receivers: [routing/logs]
+          processors: [transform/logs-trim, batch]
+          exporters: [awscloudwatchlogs/audit]
+        logs/events:
+          receivers: [routing/logs]
+          processors: [transform/logs-trim, batch]
+          exporters: [awscloudwatchlogs/events]
+
+# ==========================================================================
+# cluster (Deployment, 단일 replica: 클러스터 범위 대상은 한 번만 수집)
+# ==========================================================================
+cluster:
+  enabled: true
+  kind: Deployment
+  replicaCount: 1
+
+  serviceAccount:
+    create: true
+    name: "otel-collector-cluster"
+    annotations: {}
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+  securityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  tolerations: []
+  nodeSelector: {}
+  affinity: {}
+
+  extraEnv: []
+
+  # 비동기 처리 가시성: 메시지 브로커 Consumer Lag 수집 (API 는 정상인데 후행 로직이 밀리는 상황 탐지)
+  messaging:
+    kafka:
+      enabled: false
+      brokers: []            # ["b-1.msk.ap-northeast-2.amazonaws.com:9092"]
+      protocolVersion: "2.8.0"
+      clientId: nebula-otel
+    rabbitmq:
+      enabled: false
+      endpoint: "http://rabbitmq.messaging.svc:15672"
+      username: monitoring
+      # 비밀번호는 Secret 에서 RABBITMQ_PASSWORD 로 주입
+      passwordSecret:
+        name: rabbitmq-monitoring
+        key: password
+
+  config:
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+
+    receivers:
+      # Kubernetes Events (OOMKilled, FailedScheduling, BackOff, Evicted ...)
+      k8sobjects:
+        auth_type: serviceAccount
+        objects:
+          - name: events
+            group: events.k8s.io
+            mode: watch
+
+      prometheus:
+        config:
+          global:
+            scrape_interval: 30s
+            scrape_timeout: 10s
+          scrape_configs:
+            # kube-state-metrics: 클러스터 상태 (honor_labels 로 KSM 의 namespace/pod 라벨 보존)
+            - job_name: kube-state-metrics
+              honor_labels: true
+              kubernetes_sd_configs:
+                - role: endpoints
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_service_label_app_kubernetes_io_name]
+                  action: keep
+                  regex: kube-state-metrics
+                - source_labels: [__meta_kubernetes_endpoint_port_name]
+                  action: keep
+                  regex: http
+
+            # API server (EKS 컨트롤 플레인) - 핵심 지표만
+            - job_name: apiserver
+              scheme: https
+              tls_config:
+                ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              authorization:
+                credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+              kubernetes_sd_configs:
+                - role: endpoints
+                  namespaces:
+                    names: [default]
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+                  action: keep
+                  regex: kubernetes;https
+              metric_relabel_configs:
+                - source_labels: [__name__]
+                  action: keep
+                  regex: apiserver_request_total|apiserver_current_inflight_requests|apiserver_storage_objects
+                - action: labeldrop
+                  regex: component|group|version|subresource|scope|dry_run
+
+            - job_name: otelcol
+              static_configs:
+                - targets: ["${env:POD_IP}:8888"]
+                  labels:
+                    component: cluster
+              metric_relabel_configs:
+                - source_labels: [__name__]
+                  action: keep
+                  regex: otelcol_.*
+
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 80
+        spike_limit_percentage: 20
+      batch:
+        timeout: 5s
+        send_batch_size: 1024
+
+      resource/events:
+        attributes:
+          - key: k8s.cluster.name
+            value: ${env:CLUSTER_NAME}
+            action: upsert
+          - key: deployment.environment
+            value: ${env:ENVIRONMENT}
+            action: insert
+          - key: service.name
+            value: k8s-events
+            action: upsert
+          - key: nebula.log.type
+            value: k8s-event
+            action: upsert
+
+      # 삭제 이벤트 / 정상(Normal) 이벤트는 운영상 의미 있는 것만 남긴다
+      filter/events:
+        error_mode: ignore
+        logs:
+          log_record:
+            - 'body["type"] == "DELETED"'
+            - 'body["object"]["type"] == "Normal" and not IsMatch(body["object"]["reason"], "^(Killing|ScalingReplicaSet|SuccessfulRescale|Evicted|Preempted|NodeNotReady|Rebooted)$")'
+
+      transform/events:
+        error_mode: ignore
+        log_statements:
+          - context: log
+            statements:
+              - set(attributes["k8s.event.reason"], body["object"]["reason"])
+              - set(attributes["k8s.event.type"], body["object"]["type"])
+              - set(attributes["k8s.event.count"], body["object"]["deprecatedCount"])
+              - set(attributes["k8s.object.kind"], body["object"]["regarding"]["kind"])
+              - set(attributes["k8s.object.name"], body["object"]["regarding"]["name"])
+              - set(resource.attributes["k8s.namespace.name"], body["object"]["regarding"]["namespace"])
+              - set(severity_text, "WARN") where body["object"]["type"] == "Warning"
+              - set(severity_number, SEVERITY_NUMBER_WARN) where body["object"]["type"] == "Warning"
+              - set(severity_text, "INFO") where body["object"]["type"] == "Normal"
+              - set(severity_number, SEVERITY_NUMBER_INFO) where body["object"]["type"] == "Normal"
+              - set(body, body["object"]["note"])
+
+    exporters:
+      otlp_grpc/gateway:
+        endpoint: ${env:GATEWAY_OTLP_ENDPOINT}
+        tls:
+          insecure: true
+        compression: gzip
+        sending_queue:
+          enabled: true
+          queue_size: 5000
+        retry_on_failure:
+          enabled: true
+
+    service:
+      extensions: [health_check]
+      telemetry:
+        logs:
+          level: info
+          encoding: json
+        metrics:
+          level: normal
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 0.0.0.0
+                    port: 8888
+      pipelines:
+        logs/events:
+          receivers: [k8sobjects]
+          processors: [memory_limiter, filter/events, transform/events, resource/events, batch]
+          exporters: [otlp_grpc/gateway]
+        metrics:
+          receivers: [prometheus]
+          processors: [memory_limiter, batch]
+          exporters: [otlp_grpc/gateway]

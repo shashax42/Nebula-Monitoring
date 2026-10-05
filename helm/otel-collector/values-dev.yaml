@@ -1,29 +1,25 @@
-# Development Environment Override Values
-environment: "dev"
-clusterName: "nebula-eks-dev"
+# Development: 디버깅 편의 우선 (DEBUG 로그 수집, 트레이스 50% 보존), 리소스 최소화
+global:
+  clusterName: "nebula-eks-dev"
+  environment: "dev"
 
-# Resource limits for dev (smaller)
-resources:
-  limits:
-    cpu: 500m
-    memory: 1Gi
-  requests:
-    cpu: 100m
-    memory: 256Mi
+pipeline:
+  logs:
+    minSeverityNumber: 5        # DEBUG 이상
+  traces:
+    baselineSamplingPercent: 50
+    criticalSamplingPercent: 100
 
-# Autoscaling for dev
-autoscaling:
-  enabled: false
-  minReplicas: 1
-  maxReplicas: 3
-
-# AWS Configuration (populated from Terraform outputs)
-aws:
-  cloudwatch:
-    logGroup: "/aws/eks/nebula-eks-dev/otel-collector"
-
-# Lower sampling for dev
-config:
-  processors:
-    probabilistic_sampler:
-      sampling_percentage: 50  # 50% sampling in dev
+gateway:
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  podDisruptionBudget:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi

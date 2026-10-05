@@ -1,0 +1,240 @@
+# promtool test rules prometheus/tests/rules.test.yaml
+# 규칙이 "의도한 값"을 만들고 "의도한 순간"에 알림이 발화하는지 검증한다.
+rule_files:
+  - ../rules/01-kubernetes.rules.yaml
+  - ../rules/02-service-slo.rules.yaml
+  - ../rules/03-tenant.rules.yaml
+  - ../rules/04-business.rules.yaml
+  - ../rules/05-finops.rules.yaml
+  - ../rules/06-anomaly.rules.yaml
+  - ../rules/07-pipeline.rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # ------------------------------------------------------------------
+  # 서비스 SLO: 에러 9.1% → 14.4x(1h/5m), 6x(6h/30m) 번레이트 알림
+  # ------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'traces_span_metrics_calls_total{cluster="c1",environment="dev",service_name="checkout",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_OK"}'
+        values: '0+600x120'
+      - series: 'traces_span_metrics_calls_total{cluster="c1",environment="dev",service_name="checkout",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_ERROR"}'
+        values: '0+60x120'
+      # 클라이언트 스팬은 SLI 에서 제외되어야 한다
+      - series: 'traces_span_metrics_calls_total{cluster="c1",environment="dev",service_name="checkout",span_kind="SPAN_KIND_CLIENT",status_code="STATUS_CODE_ERROR"}'
+        values: '0+6000x120'
+      # 에러가 없는 서비스
+      - series: 'traces_span_metrics_calls_total{cluster="c1",environment="dev",service_name="cart",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_OK"}'
+        values: '0+600x120'
+    promql_expr_test:
+      - expr: round(service:error_ratio:rate5m, 0.001)
+        eval_time: 30m
+        exp_samples:
+          - labels: '{cluster="c1",environment="dev",service_name="cart"}'
+            value: 0
+          - labels: '{cluster="c1",environment="dev",service_name="checkout"}'
+            value: 0.091
+      - expr: count by (service_name, window) (ALERTS{alertname="SLOAvailabilityBurnFast", alertstate="firing"})
+        eval_time: 30m
+        exp_samples:
+          - labels: '{service_name="checkout",window="1h"}'
+            value: 1
+          - labels: '{service_name="checkout",window="6h"}'
+            value: 1
+      # 1d/2h 티켓 알림은 for: 1h 이므로 30분 시점엔 아직 pending
+      - expr: count(ALERTS{alertname="SLOAvailabilityBurnSlow", alertstate="firing"}) or vector(0)
+        eval_time: 30m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+
+  # ------------------------------------------------------------------
+  # 지연 SLO: 1s 초과 요청 비율 50% → 6x(0.3) 번레이트 알림, 14.4x(0.72)는 미발화
+  # ------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'traces_span_metrics_calls_total{cluster="c1",environment="dev",service_name="search",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_OK"}'
+        values: '0+100x90'
+      - series: 'traces_span_metrics_duration_seconds_bucket{cluster="c1",environment="dev",service_name="search",span_kind="SPAN_KIND_SERVER",le="1"}'
+        values: '0+50x90'
+      - series: 'traces_span_metrics_duration_seconds_bucket{cluster="c1",environment="dev",service_name="search",span_kind="SPAN_KIND_SERVER",le="+Inf"}'
+        values: '0+100x90'
+      - series: 'traces_span_metrics_duration_seconds_count{cluster="c1",environment="dev",service_name="search",span_kind="SPAN_KIND_SERVER"}'
+        values: '0+100x90'
+    promql_expr_test:
+      - expr: round(service:sli_latency_bad:ratio_rate1h, 0.01)
+        eval_time: 70m
+        exp_samples:
+          - labels: '{cluster="c1",environment="dev",service_name="search"}'
+            value: 0.5
+      - expr: count by (window) (ALERTS{alertname="SLOLatencyBurnFast", alertstate="firing"})
+        eval_time: 70m
+        exp_samples:
+          - labels: '{window="6h"}'
+            value: 1
+
+  # ------------------------------------------------------------------
+  # 결제 퍼널 전환율 + PG 실패 분류
+  # ------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",funnel_stage="cart_add",tenant_id="t1"}'
+        values: '0+100x90'
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",funnel_stage="checkout_start",tenant_id="t1"}'
+        values: '0+60x90'
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",funnel_stage="order_created",tenant_id="t1"}'
+        values: '0+54x90'
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",funnel_stage="payment_requested",tenant_id="t1"}'
+        values: '0+54x90'
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",funnel_stage="payment_succeeded",tenant_id="t1"}'
+        values: '0+45x90'
+      - series: 'nebula_payment_requests_total{cluster="c1",environment="dev",payment_pg="kcp",payment_method="card",payment_outcome="success",payment_failure_category="none"}'
+        values: '0+90x90'
+      - series: 'nebula_payment_requests_total{cluster="c1",environment="dev",payment_pg="kcp",payment_method="card",payment_outcome="failure",payment_failure_category="pg_timeout"}'
+        values: '0+5x90'
+      - series: 'nebula_payment_requests_total{cluster="c1",environment="dev",payment_pg="kcp",payment_method="card",payment_outcome="failure",payment_failure_category="card_limit_exceeded"}'
+        values: '0+5x90'
+    promql_expr_test:
+      - expr: round(funnel:stage_conversion:ratio1h, 0.001)
+        eval_time: 70m
+        exp_samples:
+          - labels: '{cluster="c1",environment="dev",step="1_cart_to_checkout"}'
+            value: 0.6
+          - labels: '{cluster="c1",environment="dev",step="2_checkout_to_order"}'
+            value: 0.9
+          - labels: '{cluster="c1",environment="dev",step="3_order_to_payment_request"}'
+            value: 1
+          - labels: '{cluster="c1",environment="dev",step="4_payment_request_to_success"}'
+            value: 0.833
+      - expr: round(funnel:conversion:ratio1h, 0.01)
+        eval_time: 70m
+        exp_samples:
+          - labels: '{cluster="c1",environment="dev"}'
+            value: 0.45
+      # 카드 한도 초과(고객 원인)는 시스템 실패율에서 제외 → 5%
+      - expr: round(payment_pg:system_failure_ratio:rate5m, 0.001)
+        eval_time: 30m
+        exp_samples:
+          - labels: '{cluster="c1",environment="dev",payment_pg="kcp"}'
+            value: 0.05
+      - expr: count by (payment_pg) (ALERTS{alertname="PaymentSystemFailureHigh", alertstate="firing"})
+        eval_time: 30m
+        exp_samples:
+          - labels: '{payment_pg="kcp"}'
+            value: 1
+
+  # ------------------------------------------------------------------
+  # 테넌트: Noisy Neighbor + Enterprise SLA 번레이트
+  # ------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'traces_tenant_metrics_duration_seconds_sum{cluster="c1",environment="dev",tenant_id="big",db_system="mysql",span_kind="SPAN_KIND_CLIENT"}'
+        values: '0+60x60'
+      - series: 'traces_tenant_metrics_duration_seconds_sum{cluster="c1",environment="dev",tenant_id="small1",db_system="mysql",span_kind="SPAN_KIND_CLIENT"}'
+        values: '0+6x60'
+      - series: 'traces_tenant_metrics_duration_seconds_sum{cluster="c1",environment="dev",tenant_id="small2",db_system="mysql",span_kind="SPAN_KIND_CLIENT"}'
+        values: '0+6x60'
+      - series: 'traces_tenant_metrics_calls_total{cluster="c1",environment="dev",tenant_id="acme",tenant_tier="enterprise",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_OK"}'
+        values: '0+100x60'
+      - series: 'traces_tenant_metrics_calls_total{cluster="c1",environment="dev",tenant_id="acme",tenant_tier="enterprise",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_ERROR"}'
+        values: '0+5x60'
+    promql_expr_test:
+      - expr: round(tenant:db_time_share:ratio5m, 0.001)
+        eval_time: 30m
+        exp_samples:
+          - labels: '{cluster="c1",environment="dev",tenant_id="big",db_system="mysql"}'
+            value: 0.833
+          - labels: '{cluster="c1",environment="dev",tenant_id="small1",db_system="mysql"}'
+            value: 0.083
+          - labels: '{cluster="c1",environment="dev",tenant_id="small2",db_system="mysql"}'
+            value: 0.083
+      - expr: count by (tenant_id) (ALERTS{alertname="TenantNoisyNeighbor", alertstate="firing"})
+        eval_time: 30m
+        exp_samples:
+          - labels: '{tenant_id="big"}'
+            value: 1
+      - expr: count by (tenant_id) (ALERTS{alertname="TenantEnterpriseSLOBurn", alertstate="firing"})
+        eval_time: 30m
+        exp_samples:
+          - labels: '{tenant_id="acme"}'
+            value: 1
+
+  # ------------------------------------------------------------------
+  # FinOps: 인프라 비용(₩/h) + 역마진 감지
+  #   CPU 2코어×56 + 메모리 4GiB×7 = 140 ₩/h
+  #   매출 60,000 ₩/h, 원가 66,000 ₩/h → 마진 -6,140 ₩/h
+  # ------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'kube_pod_container_resource_requests{cluster="c1",namespace="shop",pod="p1",container="app",resource="cpu"}'
+        values: '2x90'
+      - series: 'kube_pod_container_resource_requests{cluster="c1",namespace="shop",pod="p1",container="app",resource="memory"}'
+        values: '4294967296x90'
+      - series: 'kube_pod_status_phase{cluster="c1",namespace="shop",pod="p1",phase="Running"}'
+        values: '1x90'
+      - series: 'nebula_order_revenue_total{cluster="c1",environment="dev",tenant_id="t1"}'
+        values: '0+1000x90'
+      - series: 'nebula_order_cost_total{cluster="c1",environment="dev",cost_type="cogs"}'
+        values: '0+1100x90'
+    promql_expr_test:
+      - expr: cluster:infra_cost_krw:rate1h
+        eval_time: 70m
+        exp_samples:
+          - labels: '{__name__="cluster:infra_cost_krw:rate1h",cluster="c1"}'
+            value: 140
+      - expr: nebula:margin_krw:increase1h
+        eval_time: 70m
+        exp_samples:
+          - labels: '{__name__="nebula:margin_krw:increase1h",cluster="c1"}'
+            value: -6140
+      - expr: nebula:margin_burn_krw:rate1h
+        eval_time: 70m
+        exp_samples:
+          - labels: '{__name__="nebula:margin_burn_krw:rate1h",cluster="c1"}'
+            value: 6140
+    alert_rule_test:
+      - alertname: NetMarginDeficit
+        eval_time: 85m
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: finance
+              cluster: c1
+            exp_annotations:
+              summary: "역마진 진입: 순마진 -10.23%"
+              description: "쿠폰 중복 적용/배송비/PG 수수료 구성 확인. 프로모션 서킷 브레이커(쿠폰 발급 제한) 발동 검토."
+              runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#netmargindeficit
+
+  # ------------------------------------------------------------------
+  # 파이프라인: 노드 3대인데 agent 2개만 동작 → TelemetryAgentMissing
+  # ------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'kube_node_info{cluster="c1",node="n1"}'
+        values: '1x30'
+      - series: 'kube_node_info{cluster="c1",node="n2"}'
+        values: '1x30'
+      - series: 'kube_node_info{cluster="c1",node="n3"}'
+        values: '1x30'
+      - series: 'up{cluster="c1",job="otelcol",component="agent",instance="a1"}'
+        values: '1x30'
+      - series: 'up{cluster="c1",job="otelcol",component="agent",instance="a2"}'
+        values: '1x30'
+      - series: 'up{cluster="c1",job="otelcol",component="gateway",instance="g1"}'
+        values: '1x30'
+    alert_rule_test:
+      - alertname: TelemetryAgentMissing
+        eval_time: 20m
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: platform
+              cluster: c1
+            exp_annotations:
+              summary: "c1: 노드 수보다 동작 중인 OTel agent 가 적음"
+              description: "해당 노드의 로그/kubelet 메트릭이 유실 중. DaemonSet 스케줄링(taint, 리소스) 확인."
+              runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#telemetryagentmissing
+      - alertname: TelemetryGatewayAbsent
+        eval_time: 20m
+        exp_alerts: []

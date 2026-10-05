@@ -1,0 +1,38 @@
+{{- if and .Values.gateway.enabled .Values.gateway.autoscaling.enabled }}
+{{- $ctx := dict "root" $ "name" "gateway" }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "otel-collector.componentFullname" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "otel-collector.componentLabels" $ctx | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "otel-collector.componentFullname" $ctx }}
+  minReplicas: {{ .Values.gateway.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.gateway.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.gateway.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.gateway.autoscaling.targetMemoryUtilizationPercentage }}
+  behavior:
+    # 스케일 인 시 load_balancing 링이 재구성되므로 천천히 줄인다
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 300
+{{- end }}

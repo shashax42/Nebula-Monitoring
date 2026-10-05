@@ -1,80 +1,102 @@
 # ========================================
 # Kube-State-Metrics Helm Values
-# Q1~Q4 쿼리에 필요한 클러스터 상태 메트릭 제공
+# 클러스터 상태 메트릭 (Q1 클러스터 건강, Q4 리소스/비용, 테넌트 비용 배분)
 # ========================================
-
-# 설치: helm install kube-state-metrics prometheus-community/kube-state-metrics -n monitoring -f values.yaml
+# 설치: helm upgrade --install kube-state-metrics prometheus-community/kube-state-metrics -n monitoring -f values.yaml
+#
+# 수집은 otel-collector 의 cluster 컴포넌트가 Service(app.kubernetes.io/name=kube-state-metrics)를
+# 엔드포인트 디스커버리로 단 한 번 scrape 한다. 파드에 prometheus.io/scrape 어노테이션을 달면
+# agent(DaemonSet)도 같이 scrape 해서 시리즈가 중복되므로 달지 않는다.
 
 image:
   registry: registry.k8s.io
   repository: kube-state-metrics/kube-state-metrics
-  tag: v2.10.1
+  tag: v2.13.0
 
 replicas: 1
 
 resources:
   limits:
-    cpu: 100m
-    memory: 128Mi
+    cpu: 200m
+    memory: 256Mi
   requests:
     cpu: 50m
-    memory: 64Mi
+    memory: 128Mi
 
 # 수집할 리소스 (필요한 것만 - 카디널리티 관리)
+# secrets/configmaps 는 제외: 이름 노출(보안) + 대시보드/규칙에서 쓰지 않음
 collectors:
   - nodes
   - pods
   - deployments
   - daemonsets
   - statefulsets
-  - namespaces
   - replicasets
+  - namespaces
   - jobs
   - cronjobs
-  - resourcequotas
-  - limitranges
+  - horizontalpodautoscalers
   - persistentvolumeclaims
-  - persistentvolumes
-  - services
-  - endpoints
-  - configmaps
-  - secrets
+  - resourcequotas
 
-# 메트릭 라벨 설정
+# 규칙/대시보드에서 사용하는 메트릭만 노출 (나머지는 KSM 단계에서 버림)
+metricAllowlist:
+  - kube_node_info
+  - kube_node_status_condition
+  - kube_node_status_capacity
+  - kube_node_status_allocatable
+  - kube_node_spec_unschedulable
+  - kube_pod_info
+  - kube_pod_owner
+  - kube_pod_labels
+  - kube_pod_status_phase
+  - kube_pod_status_ready
+  - kube_pod_container_info
+  - kube_pod_container_status_restarts_total
+  - kube_pod_container_status_waiting_reason
+  - kube_pod_container_status_last_terminated_reason
+  - kube_pod_container_resource_requests
+  - kube_pod_container_resource_limits
+  - kube_deployment_labels
+  - kube_deployment_spec_replicas
+  - kube_deployment_status_replicas_available
+  - kube_deployment_status_replicas_unavailable
+  - kube_statefulset_replicas
+  - kube_statefulset_status_replicas_ready
+  - kube_daemonset_status_desired_number_scheduled
+  - kube_daemonset_status_number_ready
+  - kube_replicaset_owner
+  - kube_job_status_failed
+  - kube_job_owner
+  - kube_cronjob_info
+  - kube_horizontalpodautoscaler_spec_max_replicas
+  - kube_horizontalpodautoscaler_status_current_replicas
+  - kube_persistentvolumeclaim_info
+  - kube_persistentvolumeclaim_status_phase
+  - kube_namespace_labels
+  - kube_namespace_status_phase
+  - kube_resourcequota
+
+# 라벨 허용 목록
+#  - 네임스페이스의 tenant-id / tenant-tier 라벨 → 네임스페이스 단위 테넌트 비용 배분
 metricLabelsAllowlist:
   - pods=[app,app.kubernetes.io/name,app.kubernetes.io/component,version]
   - deployments=[app,app.kubernetes.io/name,version]
-  - namespaces=[*]
+  - namespaces=[tenant-id,tenant-tier,team,cost-center]
 
-# Prometheus scrape 설정
-prometheusScrape: true
+prometheusScrape: false
 
-# Service 설정
 service:
   port: 8080
-  annotations:
-    prometheus.io/scrape: "true"
-    prometheus.io/port: "8080"
 
-# Pod annotations (OTEL Collector가 자동 수집)
-podAnnotations:
-  prometheus.io/scrape: "true"
-  prometheus.io/port: "8080"
+podAnnotations: {}
 
-# 보안 설정
 securityContext:
   enabled: true
   runAsUser: 65534
+  runAsGroup: 65534
   fsGroup: 65534
 
-# 네임스페이스 필터 (선택사항)
-# namespaces: ""  # 비워두면 모든 네임스페이스
-
-# 노드 셀렉터
 nodeSelector: {}
-
-# Tolerations
 tolerations: []
-
-# Affinity
 affinity: {}

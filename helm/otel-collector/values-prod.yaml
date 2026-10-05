@@ -1,37 +1,33 @@
-# Production Environment Override Values
-environment: "production"
-clusterName: "nebula-eks-prod"
+# Production: 비용 최적화 (INFO 이상만, 트레이스 baseline 5% + 에러/지연/결제실패 100%)
+global:
+  clusterName: "nebula-eks-prod"
+  environment: "production"
 
-# Higher replicas for prod
-replicaCount: 3
+pipeline:
+  logs:
+    minSeverityNumber: 9
+  traces:
+    baselineSamplingPercent: 5
+    criticalSamplingPercent: 25
 
-# Resource limits for prod (larger)
-resources:
-  limits:
-    cpu: 2000m
-    memory: 4Gi
-  requests:
-    cpu: 500m
-    memory: 1Gi
+agent:
+  resources:
+    requests:
+      cpu: 200m
+      memory: 384Mi
+    limits:
+      cpu: "1"
+      memory: 768Mi
 
-# Autoscaling for prod
-autoscaling:
-  enabled: true
-  minReplicas: 3
-  maxReplicas: 10
-  targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: 75
-
-# AWS Configuration (populated from Terraform outputs)
-aws:
-  cloudwatch:
-    logGroup: "/aws/eks/nebula-eks-prod/otel-collector"
-
-# Lower sampling for prod (cost optimization)
-config:
-  processors:
-    probabilistic_sampler:
-      sampling_percentage: 10  # 10% sampling in prod
-    batch:
-      timeout: 5s
-      send_batch_size: 2048  # Larger batch for efficiency
+gateway:
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 65
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi

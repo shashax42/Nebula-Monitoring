@@ -1,6 +1,6 @@
 terraform {
   required_version = ">= 1.0"
-  
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -26,34 +26,19 @@ resource "aws_xray_sampling_rule" "default" {
   service_type   = "*"
   service_name   = "*"
   resource_arn   = "*"
-  
-  attributes = var.tags
+
+  attributes = {}
 }
 
-# High priority sampling for errors
-resource "aws_xray_sampling_rule" "errors" {
-  rule_name      = "${var.environment}-errors"
-  priority       = 1
-  version        = 1
-  reservoir_size = 10
-  fixed_rate     = 1.0  # Sample 100% of errors
-  url_path       = "*"
-  host           = "*"
-  http_method    = "*"
-  service_type   = "*"
-  service_name   = "*"
-  resource_arn   = "*"
-  
-  # Only sample responses with error status codes
-  attributes = merge(var.tags, {
-    "http.status_code" = "5*"
-  })
-}
+# NOTE: 이전의 "errors" 샘플링 규칙(http.status_code=5*)은 제거했다.
+#       X-Ray 샘플링 규칙은 요청 시작 시점에 평가되어 응답 코드로 매칭할 수 없고,
+#       에러 트레이스 100% 보존은 OTel gateway 의 tail_sampling(keep-errors)이 담당한다.
+#       아래 규칙들은 X-Ray SDK/원격 샘플러를 쓰는 워크로드에만 적용된다.
 
 # Sampling rule for critical services
 resource "aws_xray_sampling_rule" "critical_services" {
   count = length(var.critical_services)
-  
+
   rule_name      = "${var.environment}-critical-${var.critical_services[count.index]}"
   priority       = 100 + count.index
   version        = 1
@@ -65,8 +50,8 @@ resource "aws_xray_sampling_rule" "critical_services" {
   service_type   = "*"
   service_name   = var.critical_services[count.index]
   resource_arn   = "*"
-  
-  attributes = var.tags
+
+  attributes = {}
 }
 
 # ============================================
@@ -76,30 +61,30 @@ resource "aws_xray_sampling_rule" "critical_services" {
 # Group for production services
 resource "aws_xray_group" "production" {
   count = var.environment == "production" ? 1 : 0
-  
+
   group_name        = "Production-Services"
   filter_expression = "service(\"*.production.*\")"
-  
+
   insights_configuration {
     insights_enabled      = true
     notifications_enabled = var.enable_insights_notifications
   }
-  
+
   tags = var.tags
 }
 
 # Group for each microservice
 resource "aws_xray_group" "microservices" {
   for_each = toset(var.microservices)
-  
+
   group_name        = "${var.environment}-${each.value}"
   filter_expression = "service(\"${each.value}\")"
-  
+
   insights_configuration {
     insights_enabled      = true
     notifications_enabled = var.enable_insights_notifications
   }
-  
+
   tags = merge(var.tags, {
     Service = each.value
   })
@@ -109,12 +94,12 @@ resource "aws_xray_group" "microservices" {
 resource "aws_xray_group" "high_latency" {
   group_name        = "${var.environment}-high-latency"
   filter_expression = "duration > ${var.latency_threshold_seconds}"
-  
+
   insights_configuration {
     insights_enabled      = true
     notifications_enabled = true
   }
-  
+
   tags = merge(var.tags, {
     Type = "Performance"
   })
@@ -124,12 +109,12 @@ resource "aws_xray_group" "high_latency" {
 resource "aws_xray_group" "errors" {
   group_name        = "${var.environment}-errors"
   filter_expression = "error = true OR fault = true"
-  
+
   insights_configuration {
     insights_enabled      = true
     notifications_enabled = true
   }
-  
+
   tags = merge(var.tags, {
     Type = "Errors"
   })
@@ -141,7 +126,7 @@ resource "aws_xray_group" "errors" {
 
 resource "aws_xray_encryption_config" "main" {
   count = var.kms_key_id != null ? 1 : 0
-  
+
   type   = "KMS"
   key_id = var.kms_key_id
 }
@@ -159,15 +144,15 @@ locals {
     # Service naming convention
     service_name_prefix = "nebula"
     environment_tag     = var.environment
-    
+
     # Trace processing
     trace_id_ratio_based = var.default_fixed_rate
-    
+
     # Service discovery annotations
     annotations = {
-      "service.namespace"  = "nebula"
+      "service.namespace"      = "nebula"
       "deployment.environment" = var.environment
-      "telemetry.sdk.name"    = "opentelemetry"
+      "telemetry.sdk.name"     = "opentelemetry"
     }
   }
 }
@@ -178,14 +163,14 @@ locals {
 
 resource "aws_cloudwatch_dashboard" "xray_service_map" {
   dashboard_name = "${var.environment}-xray-service-map"
-  
+
   dashboard_body = jsonencode({
     widgets = [
       {
         type = "metric"
         properties = {
-          title   = "Service Map Overview"
-          region  = data.aws_region.current.name
+          title  = "Service Map Overview"
+          region = data.aws_region.current.name
           metrics = [
             ["AWS/X-Ray", "TracesReceived", { stat = "Sum" }],
             [".", "TracesProcessed", { stat = "Sum" }],
@@ -200,8 +185,8 @@ resource "aws_cloudwatch_dashboard" "xray_service_map" {
       {
         type = "metric"
         properties = {
-          title   = "Service Latency Distribution"
-          region  = data.aws_region.current.name
+          title  = "Service Latency Distribution"
+          region = data.aws_region.current.name
           metrics = [
             ["AWS/X-Ray", "Duration", { stat = "p50", label = "P50" }],
             ["...", { stat = "p90", label = "P90" }],
@@ -215,8 +200,8 @@ resource "aws_cloudwatch_dashboard" "xray_service_map" {
       {
         type = "metric"
         properties = {
-          title   = "Service Error Rates"
-          region  = data.aws_region.current.name
+          title  = "Service Error Rates"
+          region = data.aws_region.current.name
           metrics = [
             ["AWS/X-Ray", "ErrorRate", { stat = "Average" }],
             [".", "FaultRate", { stat = "Average" }],
@@ -235,8 +220,8 @@ resource "aws_cloudwatch_dashboard" "xray_service_map" {
       {
         type = "metric"
         properties = {
-          title   = "Trace Processing"
-          region  = data.aws_region.current.name
+          title  = "Trace Processing"
+          region = data.aws_region.current.name
           metrics = [
             ["AWS/X-Ray", "TracesReceived", { stat = "Sum" }],
             [".", "TracesProcessed", { stat = "Sum" }],
@@ -256,9 +241,9 @@ resource "aws_cloudwatch_dashboard" "xray_service_map" {
 
 resource "aws_iam_role" "xray_daemon" {
   count = var.create_daemon_role ? 1 : 0
-  
+
   name = "${var.environment}-xray-daemon"
-  
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -271,23 +256,23 @@ resource "aws_iam_role" "xray_daemon" {
       }
     ]
   })
-  
+
   tags = var.tags
 }
 
 resource "aws_iam_role_policy_attachment" "xray_daemon" {
   count = var.create_daemon_role ? 1 : 0
-  
+
   role       = aws_iam_role.xray_daemon[0].name
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
 }
 
 resource "aws_iam_role_policy" "xray_daemon_custom" {
   count = var.create_daemon_role ? 1 : 0
-  
+
   name = "xray-daemon-policy"
   role = aws_iam_role.xray_daemon[0].id
-  
+
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [

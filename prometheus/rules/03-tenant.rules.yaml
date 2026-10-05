@@ -1,0 +1,140 @@
+# 멀티테넌시: tenant_id 단위 Golden Signals, Noisy Neighbor, 티어별 SLO
+# 입력: gateway span_metrics/tenant 커넥터의 traces_tenant_metrics_*
+#   - 테넌트가 식별된 서버/컨슈머 스팬 → 요청/에러/지연
+#   - 테넌트가 식별된 DB 클라이언트 스팬(db_system 라벨) → 테넌트별 DB 점유 시간
+# 티어별 SLO 목표: enterprise 99.95% / pro 99.9% / free 99.5%
+groups:
+  - name: nebula.tenant.recording
+    interval: 30s
+    rules:
+      - record: tenant:requests:rate5m
+        expr: |
+          sum by (cluster, environment, tenant_id, tenant_tier) (
+            rate(traces_tenant_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[5m])
+          )
+      - record: tenant:errors:rate5m
+        expr: |
+          sum by (cluster, environment, tenant_id, tenant_tier) (
+            rate(traces_tenant_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[5m])
+          )
+      - record: tenant:error_ratio:rate5m
+        expr: (tenant:errors:rate5m or tenant:requests:rate5m * 0) / tenant:requests:rate5m
+      - record: tenant:latency_seconds:p99_5m
+        expr: |
+          histogram_quantile(0.99,
+            sum by (cluster, environment, tenant_id, tenant_tier, le) (
+              rate(traces_tenant_metrics_duration_seconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[5m])
+            )
+          )
+      - record: tenant_service:requests:rate5m
+        expr: |
+          sum by (cluster, environment, tenant_id, service_name) (
+            rate(traces_tenant_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[5m])
+          )
+
+      # ---------- Noisy Neighbor: 테넌트별 DB 점유 시간 ----------
+      - record: tenant:db_time_seconds:rate5m
+        expr: |
+          sum by (cluster, environment, tenant_id, db_system) (
+            rate(traces_tenant_metrics_duration_seconds_sum{db_system!=""}[5m])
+          )
+      - record: tenant:db_time_share:ratio5m
+        expr: |
+          tenant:db_time_seconds:rate5m
+          / ignoring (tenant_id) group_left ()
+          sum by (cluster, environment, db_system) (tenant:db_time_seconds:rate5m)
+      - record: tenant:db_latency_seconds:p99_5m
+        expr: |
+          histogram_quantile(0.99,
+            sum by (cluster, environment, tenant_id, db_system, le) (
+              rate(traces_tenant_metrics_duration_seconds_bucket{db_system!=""}[5m])
+            )
+          )
+      - record: tenant:db_calls:rate5m
+        expr: |
+          sum by (cluster, environment, tenant_id, db_system) (
+            rate(traces_tenant_metrics_calls_total{db_system!=""}[5m])
+          )
+
+      # ---------- 비용 배분 기준: 테넌트의 서버 처리시간 점유율 ----------
+      - record: tenant:server_time_share:ratio1h
+        expr: |
+          sum by (cluster, environment, tenant_id) (
+            rate(traces_tenant_metrics_duration_seconds_sum{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[1h])
+          )
+          / ignoring (tenant_id) group_left ()
+          sum by (cluster, environment) (
+            rate(traces_tenant_metrics_duration_seconds_sum{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[1h])
+          )
+
+  - name: nebula.tenant.slo-windows
+    interval: 1m
+    rules:
+      - record: tenant:sli_error:ratio_rate5m
+        expr: |
+          (sum by (cluster, environment, tenant_id, tenant_tier) (rate(traces_tenant_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[5m]))
+            or sum by (cluster, environment, tenant_id, tenant_tier) (rate(traces_tenant_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[5m])) * 0)
+          / sum by (cluster, environment, tenant_id, tenant_tier) (rate(traces_tenant_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[5m]))
+      - record: tenant:sli_error:ratio_rate30m
+        expr: |
+          (sum by (cluster, environment, tenant_id, tenant_tier) (rate(traces_tenant_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[30m]))
+            or sum by (cluster, environment, tenant_id, tenant_tier) (rate(traces_tenant_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[30m])) * 0)
+          / sum by (cluster, environment, tenant_id, tenant_tier) (rate(traces_tenant_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[30m]))
+      - record: tenant:sli_error:ratio_rate1h
+        expr: |
+          (sum by (cluster, environment, tenant_id, tenant_tier) (rate(traces_tenant_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[1h]))
+            or sum by (cluster, environment, tenant_id, tenant_tier) (rate(traces_tenant_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[1h])) * 0)
+          / sum by (cluster, environment, tenant_id, tenant_tier) (rate(traces_tenant_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[1h]))
+      - record: tenant:sli_error:ratio_rate6h
+        expr: |
+          (sum by (cluster, environment, tenant_id, tenant_tier) (rate(traces_tenant_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[6h]))
+            or sum by (cluster, environment, tenant_id, tenant_tier) (rate(traces_tenant_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[6h])) * 0)
+          / sum by (cluster, environment, tenant_id, tenant_tier) (rate(traces_tenant_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[6h]))
+      # 티어별 SLO 목표에 대한 1h 번레이트 (1 = 정확히 버짓 속도로 소진)
+      - record: tenant:error_budget_burn:rate1h
+        expr: |
+          tenant:sli_error:ratio_rate1h{tenant_tier="enterprise"} / 0.0005
+          or tenant:sli_error:ratio_rate1h{tenant_tier="pro"} / 0.001
+          or tenant:sli_error:ratio_rate1h{tenant_tier="free"} / 0.005
+
+  - name: nebula.tenant.alerts
+    rules:
+      # Enterprise 티어 SLA(99.95%) 버짓 급속 소진 → 계약 위반 위험
+      - alert: TenantEnterpriseSLOBurn
+        expr: |
+          (
+            tenant:sli_error:ratio_rate1h{tenant_tier="enterprise"} > (14.4 * 0.0005)
+            and tenant:sli_error:ratio_rate5m{tenant_tier="enterprise"} > (14.4 * 0.0005)
+          )
+          or
+          (
+            tenant:sli_error:ratio_rate6h{tenant_tier="enterprise"} > (6 * 0.0005)
+            and tenant:sli_error:ratio_rate30m{tenant_tier="enterprise"} > (6 * 0.0005)
+          )
+        for: 5m
+        labels:
+          severity: critical
+          team: service-owner
+          slo: tenant-sla
+        annotations:
+          summary: "Enterprise 테넌트 {{ $labels.tenant_id }} SLA(99.95%) 버짓 급속 소진"
+          description: "에러율 {{ $value | humanizePercentage }}. 해당 테넌트 트레이스(X-Ray, tenant.id 인덱스)로 원인 서비스 확인."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#tenantenterprisesloburn
+
+      # 한 테넌트가 DB 처리시간의 절반 이상을 점유 (테넌트가 3개 이상일 때만 의미 있음)
+      - alert: TenantNoisyNeighbor
+        expr: |
+          tenant:db_time_share:ratio5m > 0.5
+          and on (cluster, environment, db_system)
+          (count by (cluster, environment, db_system) (tenant:db_time_seconds:rate5m > 0) >= 3)
+        for: 15m
+        labels:
+          severity: warning
+          team: service-owner
+        annotations:
+          summary: "테넌트 {{ $labels.tenant_id }} 가 {{ $labels.db_system }} 처리시간의 {{ $value | humanizePercentage }} 점유"
+          description: |
+            Noisy Neighbor 의심. tenant:db_calls:rate5m 이 함께 급증했으면 트래픽 문제(레이트 리밋 검토),
+            호출 수는 평소와 같고 tenant:db_latency_seconds:p99_5m 만 높으면 해당 고객 데이터셋/쿼리 문제(인덱스·파티셔닝 검토).
+            Aurora RowLockTime/BlockedTransactions(CloudWatch)와 함께 확인.
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#tenantnoisyneighbor

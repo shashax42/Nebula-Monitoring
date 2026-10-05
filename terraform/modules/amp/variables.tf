@@ -16,7 +16,7 @@ variable "enable_alert_manager" {
 }
 
 variable "alert_manager_definition" {
-  description = "Alert Manager configuration in YAML format"
+  description = "Alert Manager configuration in YAML format (required when enable_alert_manager = true)"
   type        = string
   default     = ""
 }

@@ -1,40 +1,45 @@
 output "sns_topic_arn" {
-  description = "ARN of the SNS topic for alarms"
-  value       = aws_sns_topic.alarms.arn
+  description = "Warning SNS topic ARN (기본 알림 채널)"
+  value       = aws_sns_topic.warning.arn
+}
+
+output "critical_sns_topic_arn" {
+  description = "Critical SNS topic ARN (즉시 대응)"
+  value       = aws_sns_topic.critical.arn
 }
 
 output "sns_topic_name" {
-  description = "Name of the SNS topic for alarms"
-  value       = aws_sns_topic.alarms.name
+  description = "Warning SNS topic name"
+  value       = aws_sns_topic.warning.name
 }
 
 output "alarm_arns" {
-  description = "ARNs of all created alarms"
-  value = {
-    # Application alarms
-    high_error_rate    = aws_cloudwatch_metric_alarm.high_error_rate.arn
-    high_latency_p95   = aws_cloudwatch_metric_alarm.high_latency_p95.arn
-    low_availability   = aws_cloudwatch_metric_alarm.low_availability.arn
-    
-    # Infrastructure alarms
-    eks_node_cpu_high     = aws_cloudwatch_metric_alarm.eks_node_cpu_high.arn
-    eks_node_memory_high  = aws_cloudwatch_metric_alarm.eks_node_memory_high.arn
-    pod_restart_rate_high = aws_cloudwatch_metric_alarm.pod_restart_rate_high.arn
-    
-    # OTEL Collector alarms
-    otel_collector_down        = aws_cloudwatch_metric_alarm.otel_collector_down.arn
-    otel_collector_memory_high = aws_cloudwatch_metric_alarm.otel_collector_memory_high.arn
-    
-    # Composite alarms
-    service_degradation = aws_cloudwatch_composite_alarm.service_degradation.arn
-  }
+  description = "ARNs of the SLA / business / pipeline alarms"
+  value = merge(
+    {
+      availability_sla       = aws_cloudwatch_metric_alarm.availability_sla.arn
+      error_rate             = aws_cloudwatch_metric_alarm.error_rate.arn
+      latency_slo            = aws_cloudwatch_metric_alarm.latency_slo.arn
+      payment_pg_timeout     = aws_cloudwatch_metric_alarm.payment_pg_timeout.arn
+      payment_failure_rate   = aws_cloudwatch_metric_alarm.payment_failure_rate.arn
+      payment_logical_errors = aws_cloudwatch_metric_alarm.payment_logical_errors.arn
+      service_degradation    = aws_cloudwatch_composite_alarm.service_degradation.arn
+    },
+    { for k, v in aws_cloudwatch_metric_alarm.log_ingestion_stopped : "log_ingestion_stopped" => v.arn },
+    { for k, v in aws_cloudwatch_metric_alarm.service_availability : "availability_${k}" => v.arn },
+  )
 }
 
 output "critical_alarms" {
   description = "List of critical alarm ARNs"
-  value = [
-    aws_cloudwatch_metric_alarm.low_availability.arn,
-    aws_cloudwatch_metric_alarm.otel_collector_down.arn,
-    aws_cloudwatch_composite_alarm.service_degradation.arn
-  ]
+  value = concat(
+    [
+      aws_cloudwatch_metric_alarm.availability_sla.arn,
+      aws_cloudwatch_metric_alarm.payment_pg_timeout.arn,
+      aws_cloudwatch_metric_alarm.payment_logical_errors.arn,
+      aws_cloudwatch_composite_alarm.service_degradation.arn,
+    ],
+    [for a in aws_cloudwatch_metric_alarm.log_ingestion_stopped : a.arn],
+    [for a in aws_cloudwatch_metric_alarm.service_availability : a.arn],
+  )
 }

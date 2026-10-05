@@ -1,0 +1,210 @@
+# 비즈니스 완결성 지표 (Transactional Event Flow)
+#   장바구니 → 결제 시작 → 주문 생성 → 결제 요청(PG) → 결제 완료(DB Commit)
+# 입력 (앱 OTLP 계약: docs/TELEMETRY_CONTRACT.md)
+#   nebula_commerce_funnel_events_total{funnel_stage, tenant_id, channel}
+#   nebula_payment_requests_total{payment_method, payment_pg, payment_outcome, payment_failure_category, card_issuer, tenant_id}
+#     └ payment_failure_category 는 gateway 가 PG 응답코드에서 분류 (카드 한도 초과 vs PG 타임아웃 …)
+#   nebula_payment_pg_duration_seconds_*{payment_pg, payment_outcome}
+#   nebula_payment_logical_errors_total{payment_pg, tenant_id}  ← 트레이스에서 파생 (HTTP 2xx 인데 결제 실패)
+#   kafka_consumer_group_lag{group, topic, partition}, rabbitmq_message_current{state, queue}
+groups:
+  - name: nebula.business.funnel
+    interval: 1m
+    rules:
+      - record: funnel:events:rate5m
+        expr: sum by (cluster, environment, funnel_stage) (rate(nebula_commerce_funnel_events_total[5m]))
+      - record: funnel:events:increase1h
+        expr: sum by (cluster, environment, funnel_stage) (increase(nebula_commerce_funnel_events_total[1h]))
+      - record: tenant_funnel:events:increase1h
+        expr: sum by (cluster, environment, tenant_id, funnel_stage) (increase(nebula_commerce_funnel_events_total[1h]))
+
+      # 단계별 전환율 (1 - 전환율 = Drop %)
+      - record: funnel:stage_conversion:ratio1h
+        expr: |
+          funnel:events:increase1h{funnel_stage="checkout_start"}
+          / ignoring (funnel_stage)
+          funnel:events:increase1h{funnel_stage="cart_add"}
+        labels:
+          step: 1_cart_to_checkout
+      - record: funnel:stage_conversion:ratio1h
+        expr: |
+          funnel:events:increase1h{funnel_stage="order_created"}
+          / ignoring (funnel_stage)
+          funnel:events:increase1h{funnel_stage="checkout_start"}
+        labels:
+          step: 2_checkout_to_order
+      - record: funnel:stage_conversion:ratio1h
+        expr: |
+          funnel:events:increase1h{funnel_stage="payment_requested"}
+          / ignoring (funnel_stage)
+          funnel:events:increase1h{funnel_stage="order_created"}
+        labels:
+          step: 3_order_to_payment_request
+      - record: funnel:stage_conversion:ratio1h
+        expr: |
+          funnel:events:increase1h{funnel_stage="payment_succeeded"}
+          / ignoring (funnel_stage)
+          funnel:events:increase1h{funnel_stage="payment_requested"}
+        labels:
+          step: 4_payment_request_to_success
+      # 전체 전환율 (장바구니 → 결제 완료)
+      - record: funnel:conversion:ratio1h
+        expr: |
+          sum by (cluster, environment) (funnel:events:increase1h{funnel_stage="payment_succeeded"})
+          / sum by (cluster, environment) (funnel:events:increase1h{funnel_stage="cart_add"})
+      # 장바구니 점유 비율 (봇 재고 잠식 지표): 장바구니 담기 / 결제 시작
+      - record: funnel:cart_hoarding:ratio15m
+        expr: |
+          sum by (cluster, environment) (increase(nebula_commerce_funnel_events_total{funnel_stage="cart_add"}[15m]))
+          / sum by (cluster, environment) (increase(nebula_commerce_funnel_events_total{funnel_stage="checkout_start"}[15m]))
+
+  - name: nebula.business.payment
+    interval: 30s
+    rules:
+      - record: payment:requests:rate5m
+        expr: sum by (cluster, environment, payment_pg, payment_method, payment_outcome) (rate(nebula_payment_requests_total[5m]))
+      - record: payment_pg:failure_ratio:rate5m
+        expr: |
+          (sum by (cluster, environment, payment_pg) (rate(nebula_payment_requests_total{payment_outcome="failure"}[5m]))
+            or sum by (cluster, environment, payment_pg) (rate(nebula_payment_requests_total[5m])) * 0)
+          / sum by (cluster, environment, payment_pg) (rate(nebula_payment_requests_total[5m]))
+      # 시스템 원인 실패 (PG 타임아웃/장애/미분류) — 우리가 대응해야 하는 실패
+      - record: payment_pg:system_failure_ratio:rate5m
+        expr: |
+          (sum by (cluster, environment, payment_pg) (rate(nebula_payment_requests_total{payment_failure_category=~"pg_timeout|pg_unavailable|other"}[5m]))
+            or sum by (cluster, environment, payment_pg) (rate(nebula_payment_requests_total[5m])) * 0)
+          / sum by (cluster, environment, payment_pg) (rate(nebula_payment_requests_total[5m]))
+      # 고객/카드사 원인 거절 (한도초과/잔액부족/거절/유효성/이상거래) — 결제수단·카드사별
+      - record: payment_method:decline_ratio:rate15m
+        expr: |
+          (sum by (cluster, environment, payment_method, card_issuer) (rate(nebula_payment_requests_total{payment_failure_category=~"card_limit_exceeded|insufficient_funds|card_declined|invalid_card|fraud_suspected"}[15m]))
+            or sum by (cluster, environment, payment_method, card_issuer) (rate(nebula_payment_requests_total[15m])) * 0)
+          / sum by (cluster, environment, payment_method, card_issuer) (rate(nebula_payment_requests_total[15m]))
+      - record: payment:failures_by_category:rate5m
+        expr: sum by (cluster, environment, payment_pg, payment_failure_category) (rate(nebula_payment_requests_total{payment_outcome="failure"}[5m]))
+      - record: payment:pg_latency_seconds:p99_5m
+        expr: histogram_quantile(0.99, sum by (cluster, environment, payment_pg, le) (rate(nebula_payment_pg_duration_seconds_bucket[5m])))
+      - record: payment:pg_latency_seconds:p50_5m
+        expr: histogram_quantile(0.50, sum by (cluster, environment, payment_pg, le) (rate(nebula_payment_pg_duration_seconds_bucket[5m])))
+      - record: payment:logical_errors:rate5m
+        expr: sum by (cluster, environment, payment_pg) (rate(nebula_payment_logical_errors_total[5m]))
+      - record: payment:logical_error_ratio:rate5m
+        expr: |
+          payment:logical_errors:rate5m
+          / on (cluster, environment, payment_pg)
+          sum by (cluster, environment, payment_pg) (rate(nebula_payment_requests_total[5m]))
+
+  - name: nebula.business.messaging
+    interval: 30s
+    rules:
+      - record: messaging:kafka_consumer_lag:sum
+        expr: sum by (cluster, group, topic) (kafka_consumer_group_lag)
+      - record: messaging:rabbitmq_backlog:sum
+        expr: sum by (cluster, vhost, queue) (rabbitmq_message_current{state="ready"})
+
+  - name: nebula.business.alerts
+    rules:
+      - alert: PaymentSystemFailureHigh
+        expr: |
+          payment_pg:system_failure_ratio:rate5m > 0.02
+          and on (cluster, environment, payment_pg)
+          sum by (cluster, environment, payment_pg) (rate(nebula_payment_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: payment
+        annotations:
+          summary: "PG {{ $labels.payment_pg }} 시스템 원인 결제 실패율 {{ $value | humanizePercentage }}"
+          description: "pg_timeout / pg_unavailable 비중이 높으면 PG 우회 라우팅(우선순위 조정) 검토."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#paymentsystemfailurehigh
+
+      # 외부 요인(특정 카드사 거절 급증): 평소(1일 평균) 대비 2배 이상 + 절대치 5% 이상
+      - alert: PaymentDeclineSpike
+        expr: |
+          payment_method:decline_ratio:rate15m > 0.05
+          and payment_method:decline_ratio:rate15m > 2 * avg_over_time(payment_method:decline_ratio:rate15m[1d])
+        for: 15m
+        labels:
+          severity: warning
+          team: payment
+        annotations:
+          summary: "{{ $labels.payment_method }}/{{ $labels.card_issuer }} 승인 거절률 급증 {{ $value | humanizePercentage }}"
+          description: "카드사 정책/외부 유입(커뮤니티 등) 변화 가능성. 결제수단 노출 우선순위 조정 검토."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#paymentdeclinespike
+
+      - alert: PaymentLogicalErrors
+        expr: payment:logical_error_ratio:rate5m > 0.005
+        for: 10m
+        labels:
+          severity: critical
+          team: payment
+        annotations:
+          summary: "PG {{ $labels.payment_pg }} 논리 오류(HTTP 200 + 결제 실패) {{ $value | humanizePercentage }}"
+          description: "HTTP 지표로는 정상으로 보이는 '조용한 실패'. 결제 응답 파싱/상태 동기화 로직 점검."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#paymentlogicalerrors
+
+      - alert: PaymentPGLatencyHigh
+        expr: payment:pg_latency_seconds:p99_5m > 3
+        for: 10m
+        labels:
+          severity: warning
+          team: payment
+        annotations:
+          summary: "PG {{ $labels.payment_pg }} P99 응답 {{ $value | humanizeDuration }}"
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#paymentsystemfailurehigh
+
+      - alert: CheckoutConversionDrop
+        expr: |
+          funnel:stage_conversion:ratio1h < 0.5 * avg_over_time(funnel:stage_conversion:ratio1h[1d])
+          and on (cluster, environment)
+          sum by (cluster, environment) (funnel:events:increase1h{funnel_stage="cart_add"}) > 100
+        for: 30m
+        labels:
+          severity: warning
+          team: commerce
+        annotations:
+          summary: "퍼널 {{ $labels.step }} 전환율이 평소의 절반 미만 ({{ $value | humanizePercentage }})"
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#checkoutconversiondrop
+
+      # 결제 없이 장바구니만 점유하는 봇 의심: 장바구니/결제시작 비율이 평소의 2배 이상
+      - alert: CartHoardingSuspected
+        expr: |
+          funnel:cart_hoarding:ratio15m > 2 * avg_over_time(funnel:cart_hoarding:ratio15m[1d])
+          and on (cluster, environment)
+          sum by (cluster, environment) (increase(nebula_commerce_funnel_events_total{funnel_stage="cart_add"}[15m])) > 100
+        for: 15m
+        labels:
+          severity: warning
+          team: commerce
+        annotations:
+          summary: "장바구니 점유 비율 {{ $value | humanize }}x (평소 대비 2배↑) — 재고 잠식 봇 의심"
+          description: "WAF/봇 탐지 로그와 대조하고, 결제 미진행 예약 재고의 TTL 해제 정책 확인."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#carthoardingsuspected
+
+      - alert: AsyncBacklogGrowing
+        expr: |
+          (messaging:kafka_consumer_lag:sum > 1000 and deriv(messaging:kafka_consumer_lag:sum[15m]) > 0)
+          or
+          (messaging:rabbitmq_backlog:sum > 1000 and deriv(messaging:rabbitmq_backlog:sum[15m]) > 0)
+        for: 15m
+        labels:
+          severity: warning
+          team: service-owner
+        annotations:
+          summary: "비동기 처리 적체 증가: {{ $labels.group }}{{ $labels.queue }} {{ $labels.topic }} ({{ $value | humanize }})"
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#asyncbackloggrowing
+
+      # API 는 정상인데 후행 비즈니스 로직이 밀리는 상황 (HTTP 지표만으로는 보이지 않는 장애)
+      - alert: AsyncLagWhileAPIHealthy
+        expr: |
+          (messaging:kafka_consumer_lag:sum > 5000 and deriv(messaging:kafka_consumer_lag:sum[30m]) > 0)
+          unless on (cluster)
+          (sum by (cluster) (service:errors:rate5m) / sum by (cluster) (service:requests:rate5m) > 0.01)
+        for: 30m
+        labels:
+          severity: critical
+          team: service-owner
+        annotations:
+          summary: "API 정상, Consumer {{ $labels.group }}/{{ $labels.topic }} lag {{ $value | humanize }} 지속 증가"
+          description: "주문/결제 후처리(정산·알림·재고 반영) 지연. 컨슈머 스케일아웃/데드레터 확인."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#asyncbackloggrowing

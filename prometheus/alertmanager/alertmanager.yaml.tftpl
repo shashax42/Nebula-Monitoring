@@ -1,0 +1,70 @@
+# AMP Alertmanager 정의 (Terraform templatefile 로 렌더링)
+# - self-hosted Alertmanager 없이 AMP 관리형 Alertmanager → SNS 로만 전달
+# - CloudWatch Alarms 와 같은 SNS 토픽(critical / warning)으로 수렴 → 수신 채널 한 곳에서 관리
+template_files:
+  nebula_template: |
+    {{ define "nebula.sns.subject" -}}
+    [{{ .Status | toUpper }}][{{ .CommonLabels.severity }}] {{ .CommonLabels.alertname }} {{ .CommonLabels.cluster }}
+    {{- end }}
+    {{ define "nebula.sns.message" -}}
+    [{{ .Status | toUpper }}] {{ .CommonLabels.alertname }} (severity={{ .CommonLabels.severity }}, team={{ .CommonLabels.team }})
+    cluster={{ .CommonLabels.cluster }} environment={{ .CommonLabels.environment }}
+    {{ range .Alerts }}
+    - {{ .Annotations.summary }}
+    {{- if .Annotations.description }}
+      {{ .Annotations.description }}
+    {{- end }}
+      labels: {{ range .Labels.SortedPairs }}{{ .Name }}={{ .Value }} {{ end }}
+      runbook: {{ .Annotations.runbook_url }}
+      since: {{ .StartsAt.Format "2006-01-02T15:04:05Z07:00" }}
+    {{ end }}
+    {{- end }}
+alertmanager_config: |
+  templates:
+    - 'nebula_template'
+  route:
+    receiver: sns-warning
+    group_by: [alertname, cluster, service_name, tenant_id, payment_pg]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+    routes:
+      - receiver: sns-critical
+        matchers: ['severity="critical"']
+        group_wait: 10s
+        repeat_interval: 1h
+      - receiver: sns-warning
+        matchers: ['severity="warning"']
+      # info: 대응 불필요한 참고 신호 (유휴 리소스, 트래픽 이상, 스로틀링) → 하루 한 번 묶어서
+      - receiver: sns-warning
+        matchers: ['severity="info"']
+        group_by: [alertname, cluster]
+        group_wait: 10m
+        repeat_interval: 24h
+  inhibit_rules:
+    # 같은 대상에 critical 이 떠 있으면 warning/info 는 억제 (알림 폭주 방지)
+    - source_matchers: ['severity="critical"']
+      target_matchers: ['severity=~"warning|info"']
+      equal: [cluster, service_name]
+    # 게이트웨이(파이프라인)가 죽었으면 그로 인해 생기는 '데이터 없음' 계열 경보는 억제
+    - source_matchers: ['alertname="TelemetryGatewayAbsent"']
+      target_matchers: ['alertname=~"TelemetryAgentMissing|ScrapeTargetDown"']
+  receivers:
+    - name: sns-critical
+      sns_configs:
+        - topic_arn: ${critical_topic_arn}
+          sigv4:
+            region: ${region}
+          subject: '{{ template "nebula.sns.subject" . }}'
+          message: '{{ template "nebula.sns.message" . }}'
+          attributes:
+            severity: critical
+    - name: sns-warning
+      sns_configs:
+        - topic_arn: ${warning_topic_arn}
+          sigv4:
+            region: ${region}
+          subject: '{{ template "nebula.sns.subject" . }}'
+          message: '{{ template "nebula.sns.message" . }}'
+          attributes:
+            severity: '{{ .CommonLabels.severity }}'

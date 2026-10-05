@@ -1,18 +1,70 @@
+{{- if and .Values.agent.enabled .Values.agent.service.enabled }}
+{{- $ctx := dict "root" $ "name" "agent" }}
+---
+# 앱이 OTLP 를 보내는 엔드포인트: http://<fullname>.<namespace>.svc:4317
+# internalTrafficPolicy=Local → 같은 노드의 agent 로만 전달 (네트워크 홉/AZ 간 비용 최소화)
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "otel-collector.fullname" . }}
+  name: {{ printf "%s%s" (include "otel-collector.fullname" .) .Values.agent.service.nameSuffix }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "otel-collector.labels" . | nindent 4 }}
+    {{- include "otel-collector.componentLabels" $ctx | nindent 4 }}
 spec:
-  type: {{ .Values.service.type }}
+  type: ClusterIP
+  internalTrafficPolicy: {{ .Values.agent.service.internalTrafficPolicy }}
   selector:
-    {{- include "otel-collector.selectorLabels" . | nindent 4 }}
+    {{- include "otel-collector.componentSelectorLabels" $ctx | nindent 4 }}
   ports:
-    {{- range $name, $port := .Values.service.ports }}
-    - name: {{ $name }}
-      port: {{ $port.port }}
-      targetPort: {{ $port.targetPort | default $port.port }}
-      protocol: {{ $port.protocol | default "TCP" }}
-    {{- end }}
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
+      protocol: TCP
+{{- end }}
+{{- if .Values.gateway.enabled }}
+{{- $ctx := dict "root" $ "name" "gateway" }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "otel-collector.componentFullname" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "otel-collector.componentLabels" $ctx | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "otel-collector.componentSelectorLabels" $ctx | nindent 4 }}
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
+      protocol: TCP
+---
+# agent 의 load_balancing exporter 가 traceID 기준으로 gateway 파드를 고르기 위한 headless 서비스
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "otel-collector.componentFullname" $ctx }}-headless
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "otel-collector.componentLabels" $ctx | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: false
+  selector:
+    {{- include "otel-collector.componentSelectorLabels" $ctx | nindent 4 }}
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+      protocol: TCP
+{{- end }}

@@ -1,0 +1,97 @@
+# 모니터링의 모니터링: 텔레메트리 파이프라인 자체 건강
+# 파이프라인이 죽으면 다른 알림도 조용해진다(침묵 = 정상 으로 오해). 그래서 '부재(absent)'를 알림으로 만든다.
+# CloudWatch 쪽에서도 독립 경로로 감시한다 (로그 그룹 IncomingLogEvents == 0 알람, terraform/modules/cloudwatch-alarms).
+groups:
+  - name: nebula.pipeline.alerts
+    rules:
+      - alert: TelemetryGatewayAbsent
+        expr: absent_over_time(up{job="otelcol", component="gateway"}[5m])
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "OTel gateway 메트릭이 5분 이상 AMP 에 들어오지 않음"
+          description: "메트릭/트레이스/로그 전송이 모두 중단됐을 수 있다 (IRSA 권한, AMP 엔드포인트, gateway 파드 상태 확인)."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#telemetrygatewayabsent
+
+      - alert: TelemetryAgentMissing
+        expr: |
+          count by (cluster) (kube_node_info)
+          > on (cluster)
+          (count by (cluster) (up{job="otelcol", component="agent"} == 1) or count by (cluster) (kube_node_info) * 0)
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "{{ $labels.cluster }}: 노드 수보다 동작 중인 OTel agent 가 적음"
+          description: "해당 노드의 로그/kubelet 메트릭이 유실 중. DaemonSet 스케줄링(taint, 리소스) 확인."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#telemetryagentmissing
+
+      - alert: ScrapeTargetDown
+        expr: up{job!="otelcol"} == 0
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "scrape 실패: {{ $labels.job }} {{ $labels.instance }}"
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#scrapetargetdown
+
+      - alert: CollectorExportFailing
+        expr: |
+          sum by (cluster, component, exporter) (rate({__name__=~"otelcol_exporter_send_failed_(spans|metric_points|log_records)_total"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "{{ $labels.component }}/{{ $labels.exporter }} 전송 실패 지속"
+          description: "AWS 권한(IRSA), 스로틀링, 네트워크 확인. 재시도 큐가 차면 데이터 유실."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#collectorexportfailing
+
+      - alert: CollectorQueueNearFull
+        expr: |
+          max by (cluster, component, exporter) (otelcol_exporter_queue_size / otelcol_exporter_queue_capacity) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "{{ $labels.component }}/{{ $labels.exporter }} 전송 큐 {{ $value | humanizePercentage }}"
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#collectorexportfailing
+
+      - alert: CollectorRefusingData
+        expr: |
+          sum by (cluster, component) (rate({__name__=~"otelcol_receiver_refused_(spans|metric_points|log_records)_total"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "{{ $labels.component }} 가 데이터를 거부 중 (memory_limiter 백프레셔)"
+          description: "gateway HPA 상한/메모리 limit 상향 또는 상위 단계 필터 강화."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#collectorrefusingdata
+
+      - alert: TailSamplingDroppingTraces
+        expr: sum by (cluster) (rate(otelcol_processor_tail_sampling_sampling_trace_dropped_too_early_total[5m])) > 0
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "tail sampling 이 결정 전에 트레이스를 버리는 중 (num_traces 부족)"
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#tailsamplingdroppingtraces
+
+      # 카디널리티 가드: 한 타겟이 너무 많은 시리즈를 내면 AMP 비용/쿼리 성능이 급격히 나빠진다
+      - alert: HighCardinalityTarget
+        expr: scrape_samples_post_metric_relabeling > 20000
+        for: 30m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "{{ $labels.job }} {{ $labels.instance }} 가 scrape 당 {{ $value | humanize }} 샘플"
+          description: "metric_relabel_configs 허용 목록/labeldrop 으로 줄일 것."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#highcardinalitytarget

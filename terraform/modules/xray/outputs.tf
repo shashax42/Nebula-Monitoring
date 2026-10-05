@@ -1,8 +1,7 @@
 output "sampling_rules" {
   description = "Created X-Ray sampling rules"
   value = {
-    default = aws_xray_sampling_rule.default.rule_name
-    errors  = aws_xray_sampling_rule.errors.rule_name
+    default  = aws_xray_sampling_rule.default.rule_name
     critical = [for rule in aws_xray_sampling_rule.critical_services : rule.rule_name]
   }
 }

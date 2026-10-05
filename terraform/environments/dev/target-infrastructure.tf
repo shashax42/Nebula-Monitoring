@@ -29,10 +29,10 @@ variable "enable_target_monitoring" {
 data "terraform_remote_state" "target_infra" {
   count   = var.enable_target_monitoring ? 1 : 0
   backend = "s3"
-  
+
   config = {
-    bucket  = "lucia-real-buckets"  # terraform_new의 실제 버킷
-    key     = "env/dev/terraform.tfstate"  # terraform_new의 실제 state 경로
+    bucket  = "lucia-real-buckets"        # terraform_new의 실제 버킷
+    key     = "env/dev/terraform.tfstate" # terraform_new의 실제 state 경로
     region  = "ap-northeast-2"
     profile = "monitoring-admin"
   }
@@ -42,7 +42,7 @@ data "terraform_remote_state" "target_infra" {
 locals {
   # terraform_new의 outputs.cluster_name을 자동으로 읽어옴
   target_cluster_name = var.enable_target_monitoring ? try(
-    data.terraform_remote_state.target_infra[0].outputs.cluster_name, 
+    data.terraform_remote_state.target_infra[0].outputs.cluster_name,
     ""
   ) : ""
 }
@@ -207,10 +207,10 @@ resource "aws_iam_role_policy" "target_cloudwatch_metrics" {
 # ========================================
 resource "aws_cloudwatch_log_group" "target_otel" {
   count = var.enable_target_monitoring && local.target_cluster_name != "" ? 1 : 0
-  
+
   name              = "/aws/eks/${local.target_cluster_name}/otel-collector"
   retention_in_days = var.log_retention_days
-  
+
   tags = merge(local.common_tags, {
     Target = "terraform-new-infrastructure"
   })
@@ -218,10 +218,10 @@ resource "aws_cloudwatch_log_group" "target_otel" {
 
 resource "aws_cloudwatch_log_group" "target_application" {
   count = var.enable_target_monitoring && local.target_cluster_name != "" ? 1 : 0
-  
+
   name              = "/aws/eks/${local.target_cluster_name}/application"
   retention_in_days = var.log_retention_days
-  
+
   tags = merge(local.common_tags, {
     Target = "terraform-new-infrastructure"
   })
@@ -269,18 +269,24 @@ output "target_helm_values" {
 # ========================================
 output "helm_install_command" {
   description = "Helm command to install OTEL Collector on target cluster"
-  value = var.enable_target_monitoring && local.target_cluster_name != "" ? <<-EOT
+  value = (var.enable_target_monitoring && local.target_cluster_name != "" ? <<-EOT
 # 1. kubeconfig 설정 (terraform_new 클러스터)
 aws eks update-kubeconfig --name ${local.target_cluster_name} --region ${var.region}
 
-# 2. OTEL Collector Helm 차트 배포
-helm upgrade --install otel-collector ../../helm/otel-collector \
+# 2. kube-state-metrics
+helm upgrade --install kube-state-metrics prometheus-community/kube-state-metrics \
   --namespace monitoring --create-namespace \
-  -f ../../helm/otel-collector/values-target-infra.yaml \
-  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="${try(aws_iam_role.target_otel_collector[0].arn, "")}" \
-  --set config.exporters.prometheusremotewrite.endpoint="${module.amp.remote_write_url}" \
-  --set config.exporters.awscloudwatchlogs.log_group_name="${try(aws_cloudwatch_log_group.target_otel[0].name, "")}" \
-  --set config.processors.resource.attributes[0].value="${local.target_cluster_name}"
+  -f ../../../helm/kube-state-metrics/values.yaml
+
+# 3. OTEL Collector (agent DaemonSet + gateway + cluster)
+helm upgrade --install otel-collector ../../../helm/otel-collector \
+  --namespace monitoring --create-namespace \
+  -f ../../../helm/otel-collector/values-target-infra.yaml \
+  --set global.clusterName="${local.target_cluster_name}" \
+  --set global.environment="${var.environment}" \
+  --set global.aws.region="${var.region}" \
+  --set global.aws.ampRemoteWriteUrl="${module.amp.remote_write_url}" \
+  --set gateway.serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="${try(aws_iam_role.target_otel_collector[0].arn, "")}"
 EOT
-  : "Target monitoring not enabled. Set enable_target_monitoring = true and provide target_cluster_name."
+  : "Target monitoring not enabled. Set enable_target_monitoring = true and provide target_cluster_name.")
 }

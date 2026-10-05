@@ -1,0 +1,77 @@
+{{- if .Values.agent.enabled }}
+{{- $ctx := dict "root" $ "name" "agent" }}
+---
+# agent: 노드 로컬 kubelet scrape + k8sattributes(파드/워크로드 메타데이터)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "otel-collector.componentFullname" $ctx }}
+  labels:
+    {{- include "otel-collector.componentLabels" $ctx | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods, namespaces, nodes]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [nodes/metrics, nodes/stats, nodes/proxy]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [replicasets, deployments, statefulsets, daemonsets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "otel-collector.componentFullname" $ctx }}
+  labels:
+    {{- include "otel-collector.componentLabels" $ctx | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "otel-collector.componentFullname" $ctx }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "otel-collector.serviceAccountName" $ctx }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- if .Values.cluster.enabled }}
+{{- $ctx := dict "root" $ "name" "cluster" }}
+---
+# cluster: k8s Events watch, kube-state-metrics / API server 엔드포인트 디스커버리
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "otel-collector.componentFullname" $ctx }}
+  labels:
+    {{- include "otel-collector.componentLabels" $ctx | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [events, services, endpoints, pods, namespaces]
+    verbs: [get, list, watch]
+  - apiGroups: [events.k8s.io]
+    resources: [events]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - nonResourceURLs: [/metrics]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "otel-collector.componentFullname" $ctx }}
+  labels:
+    {{- include "otel-collector.componentLabels" $ctx | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "otel-collector.componentFullname" $ctx }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "otel-collector.serviceAccountName" $ctx }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

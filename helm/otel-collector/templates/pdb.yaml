@@ -1,0 +1,15 @@
+{{- if and .Values.gateway.enabled .Values.gateway.podDisruptionBudget.enabled }}
+{{- $ctx := dict "root" $ "name" "gateway" }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "otel-collector.componentFullname" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "otel-collector.componentLabels" $ctx | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.gateway.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "otel-collector.componentSelectorLabels" $ctx | nindent 6 }}
+{{- end }}
