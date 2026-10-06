@@ -27,7 +27,7 @@ python3 ../telemetry-simulator/simulate.py --scenario canary-bad    # 카나리 
 | `stock-out` | 재고 부족 거절 30% | `StockRejectionSpike` — 1일 기준선 필요, 짧게 돌리면 발화하지 않는 것이 정상 |
 | `--extensions` + `pg-timeout` · `noisy` · `deficit` · `bot` | 확장 계약 데이터 | `render.py --extensions` 로 띄운 경우만 |
 
-카나리 분석 쿼리 확인 (nebula-gitops `platform/aws/analysis-slo-canary.yaml` 과 같은 식):
+카나리 분석 쿼리 확인 (nebula-gitops `platform/aws/base/analysis-slo-canary.yaml` 과 같은 식):
 ```bash
 curl -s localhost:9090/api/v1/query --data-urlencode 'query=
   sum(rate(traces_span_metrics_calls_total{service_name="service-order",deployment_track="canary",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_ERROR"}[2m]))

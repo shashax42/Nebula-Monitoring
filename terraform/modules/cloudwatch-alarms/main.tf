@@ -581,3 +581,89 @@ resource "aws_cloudwatch_composite_alarm" "service_degradation" {
   ok_actions    = [aws_sns_topic.critical.arn]
   tags          = merge(var.tags, { Severity = "Critical", Type = "Composite" })
 }
+
+# --------------------------------------------------------------------------
+# RDS (MySQL 단일 인스턴스) — Nebula-Platform dev / staging
+# --------------------------------------------------------------------------
+resource "aws_cloudwatch_metric_alarm" "rds_cpu" {
+  for_each = toset(var.rds_instance_identifiers)
+
+  alarm_name          = "${var.environment}-rds-${each.value}-cpu-high"
+  alarm_description   = "RDS ${each.value} CPU > ${var.rds_cpu_threshold}%"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/RDS"
+  period              = 300
+  statistic           = "Average"
+  threshold           = var.rds_cpu_threshold
+  treat_missing_data  = "notBreaching"
+  dimensions          = { DBInstanceIdentifier = each.value }
+
+  alarm_actions = [aws_sns_topic.warning.arn]
+  ok_actions    = [aws_sns_topic.warning.arn]
+  tags          = merge(var.tags, { Severity = "Medium", Type = "Datastore" })
+}
+
+resource "aws_cloudwatch_metric_alarm" "rds_free_storage" {
+  for_each = toset(var.rds_instance_identifiers)
+
+  alarm_name          = "${var.environment}-rds-${each.value}-storage-low"
+  alarm_description   = "RDS ${each.value} 남은 스토리지 < ${floor(var.rds_free_storage_bytes / 1073741824)}GiB (스토리지 오토스케일 상한 확인)"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "FreeStorageSpace"
+  namespace           = "AWS/RDS"
+  period              = 300
+  statistic           = "Minimum"
+  threshold           = var.rds_free_storage_bytes
+  treat_missing_data  = "notBreaching"
+  dimensions          = { DBInstanceIdentifier = each.value }
+
+  alarm_actions = [aws_sns_topic.critical.arn]
+  ok_actions    = [aws_sns_topic.critical.arn]
+  tags          = merge(var.tags, { Severity = "Critical", Type = "Datastore" })
+}
+
+# --------------------------------------------------------------------------
+# SQS — Nebula-Platform staging (비동기 경로 병목 / 처리 실패)
+# --------------------------------------------------------------------------
+resource "aws_cloudwatch_metric_alarm" "sqs_backlog_age" {
+  for_each = toset([for q in var.sqs_queue_names : q if !endswith(q, "-dlq")])
+
+  alarm_name          = "${var.environment}-sqs-${each.value}-backlog-age"
+  alarm_description   = "SQS ${each.value} 가장 오래된 메시지 > ${var.sqs_oldest_message_age_seconds}s (소비가 생산을 못 따라감 = 비동기 병목)"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  metric_name         = "ApproximateAgeOfOldestMessage"
+  namespace           = "AWS/SQS"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = var.sqs_oldest_message_age_seconds
+  treat_missing_data  = "notBreaching"
+  dimensions          = { QueueName = each.value }
+
+  alarm_actions = [aws_sns_topic.warning.arn]
+  ok_actions    = [aws_sns_topic.warning.arn]
+  tags          = merge(var.tags, { Severity = "Medium", Type = "Messaging" })
+}
+
+resource "aws_cloudwatch_metric_alarm" "sqs_dlq_not_empty" {
+  for_each = toset([for q in var.sqs_queue_names : q if endswith(q, "-dlq")])
+
+  alarm_name          = "${var.environment}-sqs-${each.value}-not-empty"
+  alarm_description   = "DLQ ${each.value} 에 메시지가 쌓임 (재시도로 해결되지 않은 처리 실패)"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  dimensions          = { QueueName = each.value }
+
+  alarm_actions = [aws_sns_topic.critical.arn]
+  ok_actions    = [aws_sns_topic.critical.arn]
+  tags          = merge(var.tags, { Severity = "Critical", Type = "Messaging" })
+}

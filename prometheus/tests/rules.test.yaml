@@ -151,7 +151,7 @@ tests:
               runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#sagastalled
 
   # ------------------------------------------------------------------
-  # 카나리 분석 (nebula-gitops platform/aws/analysis-slo-canary.yaml 과 같은 쿼리)
+  # 카나리 분석 (nebula-gitops platform/aws/base/analysis-slo-canary.yaml 과 같은 쿼리)
   #   service-order: canary 에러 5% vs stable 0.5% → 절대·상대 기준 모두 실패 (롤백)
   #   service-x    : canary/stable 모두 2% (외부 장애) → 상대 기준은 통과 (카나리 탓이 아님)
   # ------------------------------------------------------------------

@@ -14,8 +14,9 @@ OpenTelemetry + AWS 관리형 서비스(AMP · AMG · CloudWatch · X-Ray)로 �
 | 레포 | 이 스택과의 연결 |
 |---|---|
 | nebula-services | Micrometer → OTLP(트레이스·메트릭), logstash JSON 로그, 주문 사가 단계 카운터 `nebula.commerce.funnel.events` |
-| nebula-gitops | `observability-env`(OTLP 엔드포인트), service-order Argo Rollouts canary + `nebula-slo-canary` 분석(AMP), `platform/aws` 모니터링 앱(ArgoCD) |
-| Nebula-Platform | EKS·Aurora·Redis·Strimzi, Argo Rollouts IRSA(AMP 조회), `enable_aws_platform_apps`, 이 스택이 remote state 로 읽는 output |
+| nebula-gitops | `observability-env`(OTLP 엔드포인트), service-order Argo Rollouts canary + `nebula-slo-canary` 분석(AMP), `platform/aws/envs/<env>` 모니터링 앱(ArgoCD) |
+| Nebula-Platform | dev·staging·prod EKS, 서비스 DB(dev·staging RDS / prod Aurora)·Redis·Strimzi·SQS(staging), Argo Rollouts IRSA(AMP 조회), `enable_aws_platform_apps`, 이 스택이 remote state 로 읽는 output |
+| nebula-ci-templates | 서비스 이미지 빌드·서명 → nebula-gitops 태그 갱신. 배포된 서비스의 텔레메트리가 이 스택으로 들어온다 |
 
 ## 아키텍처
 
@@ -57,7 +58,7 @@ grafana/
   generate_dashboards.py     # 대시보드 생성기 (JSON 직접 수정 금지)
   dashboards/*.json          # 기본 6종, extensions/ 확장 3종
 terraform/
-  environments/dev/          # AMP·AMG·알람·로그·아카이브·X-Ray·Nebula-Platform 연결(remote state, IRSA)
+  environments/dev/          # AMP·AMG·알람·로그·아카이브·X-Ray·Nebula-Platform 연결(remote state, IRSA). 환경은 workspace 로 나눈다
   modules/
     amp/ amg/ xray/ iam-irsa/
     cloudwatch-alarms/       # SNS 2토픽 + SLA/Aurora/Redis/파이프라인 알람 (결제 알람은 확장)
@@ -68,7 +69,7 @@ k8s/
   otel-operator/             # (대안) Micrometer 를 못 쓰는 워크로드용 자동 계측
 scripts/
   deploy.sh / deploy-target-monitoring.ps1   # 수동 배포
-  render-gitops-values.sh    # Terraform output → nebula-gitops platform/aws 값 (ArgoCD 배포)
+  render-gitops-values.sh    # Terraform output → nebula-gitops platform/aws/envs/<env> 값 (ArgoCD 배포)
   provision-grafana.sh       # AMG 데이터소스·대시보드 업로드
   validate.sh                # 전체 검증 (CI 와 동일)
 tools/
@@ -78,17 +79,26 @@ tools/
 
 ## 배포 (GitOps)
 
+환경(dev / staging / prod)마다 같은 순서. Terraform 루트는 `terraform/environments/dev` 하나이고 **환경 = workspace** 다
+(dev 는 default workspace, 그 외에는 workspace 이름 = environment. 다르면 plan 단계에서 막는다).
+
 ```bash
-# 1) Nebula-Platform: terraform apply  (EKS, ArgoCD, Argo Rollouts + AMP 조회 IRSA)
-# 2) 이 레포: AMP·AMG·알람·collector IRSA (Platform output 의 클러스터·Aurora·Redis 를 자동으로 읽는다)
-cd terraform/environments/dev && terraform apply -var enable_target_monitoring=true \
-  -var target_state_bucket=<Nebula-Platform state 버킷>
-# 3) Terraform output → nebula-gitops platform/aws 값 기록 → PR → main
-./scripts/render-gitops-values.sh dev ../nebula-gitops
-# 4) Nebula-Platform: enable_aws_platform_apps = true → ArgoCD 가 kube-state-metrics + otel-collector 동기화
+ENV=prod
+# 1) Nebula-Platform: environments/$ENV terraform apply  (EKS, ArgoCD, Argo Rollouts + AMP 조회 IRSA, 서비스 ConfigMap/Secret)
+# 2) 이 레포: AMP·AMG·알람·collector IRSA (Platform output 의 클러스터·Aurora/RDS·Redis·SQS 를 자동으로 읽는다)
+cd terraform/environments/dev
+[ "$ENV" = dev ] || terraform workspace select -or-create "$ENV"
+terraform apply -var environment="$ENV" -var enable_target_monitoring=true \
+  -var target_state_bucket=<Nebula-Platform state 버킷>        # state 경로는 env/$ENV/terraform.tfstate
+# 3) Terraform output → nebula-gitops platform/aws/envs/$ENV 값 기록 → PR → main
+./scripts/render-gitops-values.sh "$ENV" ../nebula-gitops
+# 4) Nebula-Platform: enable_aws_platform_apps = true → ArgoCD 가 kube-state-metrics + otel-collector + 카나리 분석 동기화
 # 5) 대시보드
-./scripts/provision-grafana.sh dev
+./scripts/provision-grafana.sh "$ENV"
 ```
+
+Platform output 에 따라 만들어지는 데이터 스토어 알람: Aurora(prod: CPU·데드락·복제 지연), RDS(dev·staging: CPU·스토리지),
+Redis(노드별 CPU·메모리·eviction), SQS(staging: 적체 나이, DLQ 비어 있지 않음).
 
 ArgoCD 없이 바로 설치하려면 `./scripts/deploy.sh dev` (Windows: `.\scripts\deploy-target-monitoring.ps1 -Environment dev`).
 Terraform 변수(알림 수신자, 핵심 서비스, 보존 기간, 확장)는 `terraform/environments/dev/variables.tf`.

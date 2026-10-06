@@ -59,6 +59,8 @@ locals {
   # 데이터 스토어 알람 대상: 직접 지정한 값 > Nebula-Platform output (remote state)
   aurora_cluster_identifiers  = length(var.aurora_cluster_identifiers) > 0 ? var.aurora_cluster_identifiers : local.target_aurora_cluster_identifiers
   redis_replication_group_ids = length(var.redis_replication_group_ids) > 0 ? var.redis_replication_group_ids : local.target_redis_replication_group_ids
+  rds_instance_identifiers    = length(var.rds_instance_identifiers) > 0 ? var.rds_instance_identifiers : local.target_rds_instance_identifiers
+  sqs_queue_names             = length(var.sqs_queue_names) > 0 ? var.sqs_queue_names : local.target_sqs_queue_names
 }
 
 # ==========================================================================
@@ -243,9 +245,11 @@ module "cloudwatch_alarms" {
   # 확장: 결제(PG) 알람 (결제 서비스 + collector 오버레이가 있을 때)
   enable_payment_alarms = var.enable_business_extensions
 
-  # Data stores (Nebula-Platform: Aurora MySQL / ElastiCache Redis)
+  # Data stores (Nebula-Platform: prod Aurora / dev·staging RDS / ElastiCache Redis / staging SQS)
   aurora_cluster_identifiers = local.aurora_cluster_identifiers
+  rds_instance_identifiers   = local.rds_instance_identifiers
   redis_cache_cluster_ids    = flatten([for rg in data.aws_elasticache_replication_group.redis : tolist(rg.member_clusters)])
+  sqs_queue_names            = local.sqs_queue_names
 
   tags = local.common_tags
 }
