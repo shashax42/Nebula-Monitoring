@@ -1,0 +1,168 @@
+# promtool test rules extensions.test.yaml   (확장 규칙: 테넌트 · 결제 · 마진)
+# 기본 규칙과 함께 로드해 이름 충돌이 없고 의존 관계(인프라 비용 → 테넌트 배분/마진)가 동작하는지 확인한다.
+rule_files:
+  - ../rules/01-kubernetes.rules.yaml
+  - ../rules/02-service-slo.rules.yaml
+  - ../rules/04-business.rules.yaml
+  - ../rules/05-cost.rules.yaml
+  - ../rules/06-anomaly.rules.yaml
+  - ../rules/07-pipeline.rules.yaml
+  - ../rules/extensions/tenant.rules.yaml
+  - ../rules/extensions/commerce-payment.rules.yaml
+  - ../rules/extensions/margin.rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # ------------------------------------------------------------------
+  # 결제 퍼널 전환율 + PG 실패 분류
+  # ------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",funnel_stage="cart_add",tenant_id="t1"}'
+        values: '0+100x90'
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",funnel_stage="checkout_start",tenant_id="t1"}'
+        values: '0+60x90'
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",funnel_stage="order_created",tenant_id="t1"}'
+        values: '0+54x90'
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",funnel_stage="payment_requested",tenant_id="t1"}'
+        values: '0+54x90'
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",funnel_stage="payment_succeeded",tenant_id="t1"}'
+        values: '0+45x90'
+      - series: 'nebula_payment_requests_total{cluster="c1",environment="dev",payment_pg="kcp",payment_method="card",payment_outcome="success",payment_failure_category="none"}'
+        values: '0+90x90'
+      - series: 'nebula_payment_requests_total{cluster="c1",environment="dev",payment_pg="kcp",payment_method="card",payment_outcome="failure",payment_failure_category="pg_timeout"}'
+        values: '0+5x90'
+      - series: 'nebula_payment_requests_total{cluster="c1",environment="dev",payment_pg="kcp",payment_method="card",payment_outcome="failure",payment_failure_category="card_limit_exceeded"}'
+        values: '0+5x90'
+    promql_expr_test:
+      - expr: round(funnel:stage_conversion:ratio1h, 0.001)
+        eval_time: 70m
+        exp_samples:
+          - labels: '{cluster="c1",environment="dev",step="1_cart_to_checkout"}'
+            value: 0.6
+          - labels: '{cluster="c1",environment="dev",step="2_checkout_to_order"}'
+            value: 0.9
+          - labels: '{cluster="c1",environment="dev",step="3_order_to_payment_request"}'
+            value: 1
+          - labels: '{cluster="c1",environment="dev",step="4_payment_request_to_success"}'
+            value: 0.833
+      - expr: round(funnel:conversion:ratio1h, 0.01)
+        eval_time: 70m
+        exp_samples:
+          - labels: '{cluster="c1",environment="dev"}'
+            value: 0.45
+      # 카드 한도 초과(고객 원인)는 시스템 실패율에서 제외 → 5%
+      - expr: round(payment_pg:system_failure_ratio:rate5m, 0.001)
+        eval_time: 30m
+        exp_samples:
+          - labels: '{cluster="c1",environment="dev",payment_pg="kcp"}'
+            value: 0.05
+      - expr: count by (payment_pg) (ALERTS{alertname="PaymentSystemFailureHigh", alertstate="firing"})
+        eval_time: 30m
+        exp_samples:
+          - labels: '{payment_pg="kcp"}'
+            value: 1
+
+  # ------------------------------------------------------------------
+  # 테넌트: Noisy Neighbor + Enterprise SLA 번레이트
+  # ------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'traces_tenant_metrics_duration_seconds_sum{cluster="c1",environment="dev",tenant_id="big",db_system="mysql",span_kind="SPAN_KIND_CLIENT"}'
+        values: '0+60x60'
+      - series: 'traces_tenant_metrics_duration_seconds_sum{cluster="c1",environment="dev",tenant_id="small1",db_system="mysql",span_kind="SPAN_KIND_CLIENT"}'
+        values: '0+6x60'
+      - series: 'traces_tenant_metrics_duration_seconds_sum{cluster="c1",environment="dev",tenant_id="small2",db_system="mysql",span_kind="SPAN_KIND_CLIENT"}'
+        values: '0+6x60'
+      - series: 'traces_tenant_metrics_calls_total{cluster="c1",environment="dev",tenant_id="acme",tenant_tier="enterprise",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_OK"}'
+        values: '0+100x60'
+      - series: 'traces_tenant_metrics_calls_total{cluster="c1",environment="dev",tenant_id="acme",tenant_tier="enterprise",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_ERROR"}'
+        values: '0+5x60'
+    promql_expr_test:
+      - expr: round(tenant:db_time_share:ratio5m, 0.001)
+        eval_time: 30m
+        exp_samples:
+          - labels: '{cluster="c1",environment="dev",tenant_id="big",db_system="mysql"}'
+            value: 0.833
+          - labels: '{cluster="c1",environment="dev",tenant_id="small1",db_system="mysql"}'
+            value: 0.083
+          - labels: '{cluster="c1",environment="dev",tenant_id="small2",db_system="mysql"}'
+            value: 0.083
+      - expr: count by (tenant_id) (ALERTS{alertname="TenantNoisyNeighbor", alertstate="firing"})
+        eval_time: 30m
+        exp_samples:
+          - labels: '{tenant_id="big"}'
+            value: 1
+      - expr: count by (tenant_id) (ALERTS{alertname="TenantEnterpriseSLOBurn", alertstate="firing"})
+        eval_time: 30m
+        exp_samples:
+          - labels: '{tenant_id="acme"}'
+            value: 1
+
+  # ------------------------------------------------------------------
+  # FinOps: 인프라 비용(₩/h) + 역마진 감지
+  #   CPU 2코어×56 + 메모리 4GiB×7 = 140 ₩/h
+  #   매출 60,000 ₩/h, 원가 66,000 ₩/h → 마진 -6,140 ₩/h
+  # ------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'kube_pod_container_resource_requests{cluster="c1",namespace="shop",pod="p1",container="app",resource="cpu"}'
+        values: '2x90'
+      - series: 'kube_pod_container_resource_requests{cluster="c1",namespace="shop",pod="p1",container="app",resource="memory"}'
+        values: '4294967296x90'
+      - series: 'kube_pod_status_phase{cluster="c1",namespace="shop",pod="p1",phase="Running"}'
+        values: '1x90'
+      - series: 'nebula_order_revenue_total{cluster="c1",environment="dev",tenant_id="t1"}'
+        values: '0+1000x90'
+      - series: 'nebula_order_cost_total{cluster="c1",environment="dev",cost_type="cogs"}'
+        values: '0+1100x90'
+    promql_expr_test:
+      - expr: cluster:infra_cost_krw:rate1h
+        eval_time: 70m
+        exp_samples:
+          - labels: '{__name__="cluster:infra_cost_krw:rate1h",cluster="c1"}'
+            value: 140
+      - expr: nebula:margin_krw:increase1h
+        eval_time: 70m
+        exp_samples:
+          - labels: '{__name__="nebula:margin_krw:increase1h",cluster="c1"}'
+            value: -6140
+      - expr: nebula:margin_burn_krw:rate1h
+        eval_time: 70m
+        exp_samples:
+          - labels: '{__name__="nebula:margin_burn_krw:rate1h",cluster="c1"}'
+            value: 6140
+    alert_rule_test:
+      - alertname: NetMarginDeficit
+        eval_time: 85m
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: finance
+              cluster: c1
+            exp_annotations:
+              summary: "역마진 진입: 순마진 -10.23%"
+              description: "쿠폰 중복 적용/배송비/PG 수수료 구성 확인. 프로모션 서킷 브레이커(쿠폰 발급 제한) 발동 검토."
+              runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#netmargindeficit
+
+  # ------------------------------------------------------------------
+  # FinOps 견고성: 인프라 비용(KSM) 신호가 없어도 마진은 계산된다
+  # ------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'nebula_order_revenue_total{cluster="c2",environment="dev",tenant_id="t1"}'
+        values: '0+1000x90'
+      - series: 'nebula_order_cost_total{cluster="c2",environment="dev",cost_type="cogs"}'
+        values: '0+600x90'
+    promql_expr_test:
+      - expr: nebula:margin_krw:increase1h
+        eval_time: 70m
+        exp_samples:
+          - labels: '{__name__="nebula:margin_krw:increase1h",cluster="c2"}'
+            value: 24000
+      - expr: nebula:net_margin:ratio1h
+        eval_time: 70m
+        exp_samples:
+          - labels: '{__name__="nebula:net_margin:ratio1h",cluster="c2"}'
+            value: 0.4
