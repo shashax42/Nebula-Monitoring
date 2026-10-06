@@ -1,11 +1,11 @@
 {
-  "uid": "nebula-business",
-  "title": "Nebula / Order Saga & Messaging",
-  "description": "주문 사가 단계별 흐름·완료율, 발행 실패, 보상(취소) 누락, 재고 거절, Kafka 구간 지연·적체",
+  "uid": "nebula-ext-payment",
+  "title": "Nebula / Ext / Funnel & Payments",
+  "description": "[확장] 구매 퍼널(Drop%), 결제 실패 원인 분리, 논리 오류 — 결제 서비스 도입 시 사용",
   "tags": [
     "nebula",
-    "business",
-    "saga"
+    "extension",
+    "payment"
   ],
   "timezone": "browser",
   "editable": true,
@@ -77,7 +77,7 @@
   "panels": [
     {
       "type": "row",
-      "title": "주문 사가 — HTTP 지표로는 안 보이는 흐름 단절",
+      "title": "Business Funnel — 장바구니 → 결제 완료",
       "collapsed": false,
       "id": 1,
       "gridPos": {
@@ -90,8 +90,8 @@
     },
     {
       "type": "bargauge",
-      "title": "단계별 이벤트 (최근 1시간)",
-      "description": "거절·취소는 3단계의 부분집합. 거절 수와 취소 수가 다르면 보상 누락",
+      "title": "퍼널 단계별 이벤트 (최근 1시간)",
+      "description": "",
       "datasource": {
         "type": "prometheus",
         "uid": "${amp}"
@@ -103,8 +103,8 @@
             "type": "prometheus",
             "uid": "${amp}"
           },
-          "expr": "sum(saga:events:increase1h{cluster=\"$cluster\",funnel_stage=\"order_placed\"}) or vector(0)",
-          "legendFormat": "1 주문 접수 (order)",
+          "expr": "sum(funnel:events:increase1h{cluster=\"$cluster\",funnel_stage=\"cart_add\"})",
+          "legendFormat": "1 장바구니 담기",
           "range": false,
           "instant": true
         },
@@ -114,8 +114,8 @@
             "type": "prometheus",
             "uid": "${amp}"
           },
-          "expr": "sum(saga:events:increase1h{cluster=\"$cluster\",funnel_stage=\"purchase_published\"}) or vector(0)",
-          "legendFormat": "2 purchase 발행 (order)",
+          "expr": "sum(funnel:events:increase1h{cluster=\"$cluster\",funnel_stage=\"checkout_start\"})",
+          "legendFormat": "2 결제 시작",
           "range": false,
           "instant": true
         },
@@ -125,8 +125,8 @@
             "type": "prometheus",
             "uid": "${amp}"
           },
-          "expr": "sum(saga:events:increase1h{cluster=\"$cluster\",funnel_stage=\"purchase_consumed\"}) or vector(0)",
-          "legendFormat": "3 재고 처리 (product)",
+          "expr": "sum(funnel:events:increase1h{cluster=\"$cluster\",funnel_stage=\"order_created\"})",
+          "legendFormat": "3 주문 생성",
           "range": false,
           "instant": true
         },
@@ -136,8 +136,8 @@
             "type": "prometheus",
             "uid": "${amp}"
           },
-          "expr": "sum(saga:events:increase1h{cluster=\"$cluster\",funnel_stage=\"stock_rejected\"}) or vector(0)",
-          "legendFormat": "└ 재고 부족 거절 (product)",
+          "expr": "sum(funnel:events:increase1h{cluster=\"$cluster\",funnel_stage=\"payment_requested\"})",
+          "legendFormat": "4 결제 요청(PG)",
           "range": false,
           "instant": true
         },
@@ -147,19 +147,8 @@
             "type": "prometheus",
             "uid": "${amp}"
           },
-          "expr": "sum(saga:events:increase1h{cluster=\"$cluster\",funnel_stage=\"order_canceled\"}) or vector(0)",
-          "legendFormat": "└ 보상: 주문 취소 (order)",
-          "range": false,
-          "instant": true
-        },
-        {
-          "refId": "F",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${amp}"
-          },
-          "expr": "sum(saga:events:increase1h{cluster=\"$cluster\",funnel_stage=\"purchase_publish_failed\"}) or vector(0)",
-          "legendFormat": "✕ 발행 실패 (order)",
+          "expr": "sum(funnel:events:increase1h{cluster=\"$cluster\",funnel_stage=\"payment_succeeded\"})",
+          "legendFormat": "5 결제 완료(DB Commit)",
           "range": false,
           "instant": true
         }
@@ -201,13 +190,13 @@
         "x": 0,
         "y": 1,
         "w": 10,
-        "h": 9
+        "h": 8
       }
     },
     {
-      "type": "stat",
-      "title": "사가 완료율 (1h)",
-      "description": "재고 차감까지 끝난 주문 / 접수된 주문. 재고 부족 거절도 완료율을 낮춘다",
+      "type": "bargauge",
+      "title": "단계별 Drop (%)",
+      "description": "",
       "datasource": {
         "type": "prometheus",
         "uid": "${amp}"
@@ -219,7 +208,77 @@
             "type": "prometheus",
             "uid": "${amp}"
           },
-          "expr": "saga:completion:ratio1h{cluster=\"$cluster\"}",
+          "expr": "1 - funnel:stage_conversion:ratio1h{cluster=\"$cluster\"}",
+          "legendFormat": "{{step}}",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 0.3
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "valueMode": "text"
+      },
+      "id": 3,
+      "gridPos": {
+        "x": 10,
+        "y": 1,
+        "w": 7,
+        "h": 8
+      }
+    },
+    {
+      "type": "stat",
+      "title": "전체 전환율 (1h)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "funnel:conversion:ratio1h{cluster=\"$cluster\"}",
           "legendFormat": "__auto",
           "range": true,
           "instant": false
@@ -237,11 +296,11 @@
               },
               {
                 "color": "#EAB839",
-                "value": 0.9
+                "value": 0.02
               },
               {
                 "color": "green",
-                "value": 0.97
+                "value": 0.05
               }
             ]
           },
@@ -267,17 +326,24 @@
         "justifyMode": "auto",
         "orientation": "auto"
       },
-      "id": 3,
+      "links": [
+        {
+          "title": "Runbook: 전환율 하락",
+          "url": "https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#checkoutconversiondrop",
+          "targetBlank": true
+        }
+      ],
+      "id": 4,
       "gridPos": {
-        "x": 10,
+        "x": 17,
         "y": 1,
         "w": 7,
-        "h": 9
+        "h": 8
       }
     },
     {
-      "type": "stat",
-      "title": "발행 실패율 (5m)",
+      "type": "timeseries",
+      "title": "전환율 추세 (Conversion Rate Trend)",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -290,8 +356,8 @@
             "type": "prometheus",
             "uid": "${amp}"
           },
-          "expr": "saga:publish_failure:ratio_rate5m{cluster=\"$cluster\"}",
-          "legendFormat": "__auto",
+          "expr": "funnel:conversion:ratio1h{cluster=\"$cluster\"}",
+          "legendFormat": "전체 전환율",
           "range": true,
           "instant": false
         }
@@ -299,84 +365,6 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "#EAB839",
-                "value": 0.001
-              },
-              {
-                "color": "red",
-                "value": 0.01
-              }
-            ]
-          },
-          "color": {
-            "mode": "thresholds"
-          },
-          "noValue": "—",
-          "decimals": 2
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "area",
-        "textMode": "auto",
-        "justifyMode": "auto",
-        "orientation": "auto"
-      },
-      "links": [
-        {
-          "title": "Runbook: 발행 실패",
-          "url": "https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#sagapublishfailures",
-          "targetBlank": true
-        }
-      ],
-      "id": 4,
-      "gridPos": {
-        "x": 17,
-        "y": 1,
-        "w": 7,
-        "h": 9
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "단계별 처리량 (건/s)",
-      "description": "order_placed ≈ purchase_published ≈ purchase_consumed 가 정상. 아래로 벌어지는 선이 끊긴 구간",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${amp}"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${amp}"
-          },
-          "expr": "sum by (funnel_stage) (saga:events:rate5m{cluster=\"$cluster\"})",
-          "legendFormat": "{{funnel_stage}}",
-          "range": true,
-          "instant": false
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "suffix: 건/s",
           "custom": {
             "lineWidth": 2,
             "fillOpacity": 0,
@@ -393,7 +381,7 @@
       },
       "options": {
         "legend": {
-          "showLegend": true,
+          "showLegend": false,
           "displayMode": "list",
           "placement": "bottom"
         },
@@ -405,15 +393,15 @@
       "id": 5,
       "gridPos": {
         "x": 0,
-        "y": 10,
+        "y": 9,
         "w": 12,
         "h": 8
       }
     },
     {
       "type": "timeseries",
-      "title": "단계 사이에 멈춘 건수 (15분 창)",
-      "description": "창 경계의 처리 중 이벤트 때문에 작은 값은 정상. 보상 누락이 쌓이면 SagaCompensationGap",
+      "title": "장바구니 점유 비율 (봇 재고 잠식 지표)",
+      "description": "결제 없이 장바구니만 점유하는 봇이 늘면 비율이 평소의 2배를 넘는다",
       "datasource": {
         "type": "prometheus",
         "uid": "${amp}"
@@ -425,8 +413,8 @@
             "type": "prometheus",
             "uid": "${amp}"
           },
-          "expr": "saga:consume_gap:increase15m{cluster=\"$cluster\"}",
-          "legendFormat": "발행 - 재고 처리",
+          "expr": "funnel:cart_hoarding:ratio15m{cluster=\"$cluster\"}",
+          "legendFormat": "장바구니/결제시작",
           "range": true,
           "instant": false
         },
@@ -436,15 +424,15 @@
             "type": "prometheus",
             "uid": "${amp}"
           },
-          "expr": "saga:compensation_gap:increase15m{cluster=\"$cluster\"}",
-          "legendFormat": "재고 거절 - 주문 취소 (보상 누락)",
+          "expr": "2 * avg_over_time(funnel:cart_hoarding:ratio15m{cluster=\"$cluster\"}[1d])",
+          "legendFormat": "알림 기준 (1일 평균 × 2)",
           "range": true,
           "instant": false
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "unit": "x",
           "custom": {
             "lineWidth": 2,
             "fillOpacity": 0,
@@ -472,28 +460,36 @@
       },
       "links": [
         {
-          "title": "Runbook: 보상 누락",
-          "url": "https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#sagacompensationgap",
-          "targetBlank": true
-        },
-        {
-          "title": "Runbook: 사가 정지",
-          "url": "https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#sagastalled",
+          "title": "Runbook: 장바구니 점유",
+          "url": "https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#carthoardingsuspected",
           "targetBlank": true
         }
       ],
       "id": 6,
       "gridPos": {
         "x": 12,
-        "y": 10,
+        "y": 9,
         "w": 12,
         "h": 8
       }
     },
     {
+      "type": "row",
+      "title": "결제 — 실패 원인 분리 (카드 한도 초과 vs PG 타임아웃)",
+      "collapsed": false,
+      "id": 7,
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
       "type": "timeseries",
-      "title": "재고 부족 거절률",
-      "description": "시스템 장애가 아니라 품절/프로모션 신호. SLO 와 분리해서 본다",
+      "title": "실패 원인별 결제 실패 (건/s)",
+      "description": "gateway 가 PG 응답코드를 카테고리로 정규화. 주황/빨강 = 시스템 원인(우리가 대응), 청록/파랑 = 고객·카드사 원인",
       "datasource": {
         "type": "prometheus",
         "uid": "${amp}"
@@ -505,19 +501,205 @@
             "type": "prometheus",
             "uid": "${amp}"
           },
-          "expr": "saga:stock_rejection:ratio_rate15m{cluster=\"$cluster\"}",
-          "legendFormat": "15m",
+          "expr": "sum by (payment_failure_category) (payment:failures_by_category:rate5m{cluster=\"$cluster\"})",
+          "legendFormat": "{{payment_failure_category}}",
           "range": true,
           "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: 건/s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
         },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pg_timeout"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pg_unavailable"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "other"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#C4A000"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "card_limit_exceeded"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#1F78C1"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "insufficient_funds"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#5794F2"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "card_declined"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#2C7BB6"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "invalid_card"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8AB8FF"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "fraud_suspected"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#7D5BBE"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "user_cancelled"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#4E9A9A"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 8,
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "PG별 시스템 원인 실패율",
+      "description": "pg_timeout / pg_unavailable / other. 점선 = 알림 기준 2%",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
         {
-          "refId": "B",
+          "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "${amp}"
           },
-          "expr": "2 * avg_over_time(saga:stock_rejection:ratio_rate15m{cluster=\"$cluster\"}[1d])",
-          "legendFormat": "알림 기준 (1일 평균 × 2)",
+          "expr": "payment_pg:system_failure_ratio:rate5m{cluster=\"$cluster\"}",
+          "legendFormat": "{{payment_pg}}",
           "range": true,
           "instant": false
         }
@@ -531,10 +713,27 @@
             "showPoints": "never",
             "spanNulls": true,
             "axisSoftMin": 0,
-            "gradientMode": "none"
+            "gradientMode": "none",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
+            "axisSoftMax": 0.03
           },
           "color": {
             "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.02
+              }
+            ]
           }
         },
         "overrides": []
@@ -552,22 +751,22 @@
       },
       "links": [
         {
-          "title": "Runbook: 재고 거절 급증",
-          "url": "https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#stockrejectionspike",
+          "title": "Runbook: PG 실패",
+          "url": "https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#paymentsystemfailurehigh",
           "targetBlank": true
         }
       ],
-      "id": 7,
+      "id": 9,
       "gridPos": {
-        "x": 0,
+        "x": 12,
         "y": 18,
         "w": 12,
         "h": 8
       }
     },
     {
-      "type": "table",
-      "title": "취소·실패 사유 (5m, 건/s)",
+      "type": "timeseries",
+      "title": "PG 응답 P99",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -580,7 +779,162 @@
             "type": "prometheus",
             "uid": "${amp}"
           },
-          "expr": "sort_desc(sum by (funnel_stage, reason) (saga:events:rate5m{cluster=\"$cluster\",reason!=\"none\"}) > 0)",
+          "expr": "payment:pg_latency_seconds:p99_5m{cluster=\"$cluster\"}",
+          "legendFormat": "{{payment_pg}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
+            "axisSoftMax": 4.5
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 3
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 10,
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Logical Error (HTTP 200 + 결제 실패)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "payment:logical_error_ratio:rate5m{cluster=\"$cluster\"}",
+          "legendFormat": "{{payment_pg}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "gradientMode": "none",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
+            "axisSoftMax": 0.0075
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.005
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "links": [
+        {
+          "title": "Runbook: 논리 오류",
+          "url": "https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#paymentlogicalerrors",
+          "targetBlank": true
+        }
+      ],
+      "id": 11,
+      "gridPos": {
+        "x": 8,
+        "y": 26,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "table",
+      "title": "결제수단·카드사별 승인 거절률 (15m)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${amp}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${amp}"
+          },
+          "expr": "sort_desc(payment_method:decline_ratio:rate15m{cluster=\"$cluster\"} > 0)",
           "legendFormat": "__auto",
           "range": false,
           "instant": true,
@@ -589,7 +943,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "suffix: 건/s",
+          "unit": "percentunit",
           "custom": {
             "align": "auto",
             "cellOptions": {
@@ -597,13 +951,48 @@
             }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "#EAB839",
+                      "value": 0.05
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "showHeader": true,
         "sortBy": [
           {
-            "displayName": "건/s",
+            "displayName": "거절률",
             "desc": true
           }
         ]
@@ -624,266 +1013,18 @@
               "otel_scope_schema_url": true
             },
             "renameByName": {
-              "Value": "건/s",
-              "funnel_stage": "단계",
-              "reason": "사유"
+              "Value": "거절률",
+              "payment_method": "결제수단",
+              "card_issuer": "카드사"
             }
           }
         }
       ],
-      "id": 8,
-      "gridPos": {
-        "x": 12,
-        "y": 18,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "row",
-      "title": "Kafka — 토픽 구간 (purchase: order → product, refund: product → order)",
-      "collapsed": false,
-      "id": 9,
-      "gridPos": {
-        "x": 0,
-        "y": 26,
-        "w": 24,
-        "h": 1
-      },
-      "panels": []
-    },
-    {
-      "type": "timeseries",
-      "title": "Consumer Lag",
-      "description": "",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${amp}"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${amp}"
-          },
-          "expr": "messaging:kafka_consumer_lag:sum{cluster=\"$cluster\"}",
-          "legendFormat": "{{group}} / {{topic}}",
-          "range": true,
-          "instant": false
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": true,
-            "axisSoftMin": 0,
-            "gradientMode": "none"
-          },
-          "color": {
-            "mode": "palette-classic"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "showLegend": true,
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "links": [
-        {
-          "title": "Runbook: 비동기 적체",
-          "url": "https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#asyncbackloggrowing",
-          "targetBlank": true
-        }
-      ],
-      "id": 10,
-      "gridPos": {
-        "x": 0,
-        "y": 27,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "Consumer 처리 P95 (트레이스)",
-      "description": "",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${amp}"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${amp}"
-          },
-          "expr": "saga_topic:consumer_latency_seconds:p95_5m{cluster=\"$cluster\"}",
-          "legendFormat": "{{service_name}} ← {{messaging_destination_name}}",
-          "range": true,
-          "instant": false
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": true,
-            "axisSoftMin": 0,
-            "gradientMode": "none"
-          },
-          "color": {
-            "mode": "palette-classic"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "showLegend": true,
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "id": 11,
-      "gridPos": {
-        "x": 12,
-        "y": 27,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "Producer ack P95 (트레이스)",
-      "description": "",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${amp}"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${amp}"
-          },
-          "expr": "saga_topic:producer_latency_seconds:p95_5m{cluster=\"$cluster\"}",
-          "legendFormat": "{{service_name}} → {{messaging_destination_name}}",
-          "range": true,
-          "instant": false
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": true,
-            "axisSoftMin": 0,
-            "gradientMode": "none"
-          },
-          "color": {
-            "mode": "palette-classic"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "showLegend": true,
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
       "id": 12,
       "gridPos": {
-        "x": 0,
-        "y": 35,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "Consumer 에러 스팬 (건/s)",
-      "description": "리스너 예외 (역직렬화 실패, 상품 없음 등). 재시도되면 lag 과 함께 증가",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${amp}"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${amp}"
-          },
-          "expr": "saga_topic:consumer_errors:rate5m{cluster=\"$cluster\"}",
-          "legendFormat": "{{service_name}} ← {{messaging_destination_name}}",
-          "range": true,
-          "instant": false
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "suffix: 건/s",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 0,
-            "showPoints": "never",
-            "spanNulls": true,
-            "axisSoftMin": 0,
-            "gradientMode": "none"
-          },
-          "color": {
-            "mode": "palette-classic"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "showLegend": true,
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "id": 13,
-      "gridPos": {
-        "x": 12,
-        "y": 35,
-        "w": 12,
+        "x": 16,
+        "y": 26,
+        "w": 8,
         "h": 8
       }
     }

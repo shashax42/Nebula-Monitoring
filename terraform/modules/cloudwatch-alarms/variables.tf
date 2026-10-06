@@ -89,7 +89,13 @@ variable "metric_period" {
   default     = 300
 }
 
-# ---------------- 결제 ----------------
+# ---------------- 결제 (확장) ----------------
+variable "enable_payment_alarms" {
+  description = "결제(PG) 알람 생성. 결제 서비스와 collector 오버레이(values-extension-business.yaml)가 있을 때만 켠다"
+  type        = bool
+  default     = false
+}
+
 variable "payment_pg_timeout_threshold" {
   description = "PG 타임아웃 실패 비율 임계 (%)"
   type        = number

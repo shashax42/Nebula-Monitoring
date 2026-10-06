@@ -1,54 +1,9 @@
-# FinOps & 역마진(Margin Erosion) 탐지
-#   - 인프라 비용 신호: 실행 중 파드의 requests × 단가 (예약한 만큼 비용이 발생한다는 관점)
-#   - 테넌트 비용 배분: (공유 풀) 서버 처리시간 점유율 × 클러스터 비용 / (전용 네임스페이스) 네임스페이스 비용
-#   - 매출/원가: 앱이 보내는 nebula_order_revenue_total, nebula_order_cost_total{cost_type}
-#   - 순마진 게이지 임계: 5% 미만 Warning(Yellow) / 0% 미만 Deficit(Red)
-#
-# 단가는 "데이터"로 관리한다: 아래 nebula:infra_price_krw:* 상수만 바꾸면 전체 비용 지표가 갱신된다.
-#   기본값은 ap-northeast-2 온디맨드 범용 인스턴스 기준 근사치(환율 1,400원)이며, 실제 계약 단가로 교체할 것.
+# 확장: 매출 대비 마진 / 역마진(Margin Erosion) 탐지
+#   현재 nebula-services 는 매출·원가 이벤트를 내보내지 않는다. 주문 금액·원가 계약
+#   (nebula_order_revenue_total, nebula_order_cost_total{cost_type})을 구현한 뒤 켠다.
+#   순마진 임계: 5% 미만 Warning / 0% 미만 Deficit. 인프라 비용은 05-cost.rules.yaml 에서 온다.
+#   테넌트 효율(tenant:cost_efficiency)은 extensions/tenant.rules.yaml 과 함께 로드해야 값이 나온다.
 groups:
-  - name: nebula.finops.prices
-    interval: 5m
-    rules:
-      - record: nebula:infra_price_krw:cpu_core_hour
-        expr: vector(56)
-      - record: nebula:infra_price_krw:memory_gib_hour
-        expr: vector(7)
-
-  - name: nebula.finops.cost
-    interval: 5m
-    rules:
-      # 네임스페이스 시간당 인프라 비용 (₩/h)
-      - record: namespace:infra_cost_krw:rate1h
-        expr: |
-          namespace:cpu_requests:sum * on () group_left () nebula:infra_price_krw:cpu_core_hour
-          + on (cluster, namespace)
-          (namespace:memory_requests_bytes:sum / 2^30) * on () group_left () nebula:infra_price_krw:memory_gib_hour
-      - record: cluster:infra_cost_krw:rate1h
-        expr: sum by (cluster) (namespace:infra_cost_krw:rate1h)
-
-      # 테넌트 비용 배분 — 공유 풀 모델
-      - record: tenant:infra_cost_krw:rate1h
-        expr: |
-          tenant:server_time_share:ratio1h
-          * on (cluster) group_left ()
-          cluster:infra_cost_krw:rate1h
-      # 테넌트 비용 배분 — 네임스페이스 전용 모델 (namespace 라벨 tenant-id)
-      - record: tenant_namespace:infra_cost_krw:rate1h
-        expr: |
-          sum by (cluster, label_tenant_id) (
-            namespace:infra_cost_krw:rate1h
-            * on (cluster, namespace) group_left (label_tenant_id)
-            max by (cluster, namespace, label_tenant_id) (kube_namespace_labels{label_tenant_id!=""})
-          )
-
-      # 리소스 효율: 요청(requests) 대비 실제 사용률 → 낭비 비용
-      - record: namespace:idle_cost_krw:rate1h
-        expr: |
-          namespace:infra_cost_krw:rate1h
-          * on (cluster, namespace)
-          clamp_min(1 - namespace:cpu_usage_vs_request:ratio, 0)
-
   - name: nebula.finops.margin
     interval: 5m
     rules:

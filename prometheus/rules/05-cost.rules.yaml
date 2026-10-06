@@ -1,0 +1,34 @@
+# 인프라 비용 신호 (FinOps 기본)
+#   실행 중 파드의 requests × 단가 = 네임스페이스/클러스터 시간당 비용, requests 대비 실사용 → 유휴 비용
+#   입력은 kube-state-metrics + kubelet 뿐이라 서비스 코드 변경 없이 동작한다.
+#   테넌트 비용 배분·매출 대비 마진(역마진)은 앱 계약이 필요한 확장: extensions/tenant.rules.yaml, extensions/margin.rules.yaml
+#
+# 단가는 "데이터"로 관리한다: 아래 nebula:infra_price_krw:* 상수만 바꾸면 전체 비용 지표가 갱신된다.
+#   기본값은 ap-northeast-2 온디맨드 범용 인스턴스 기준 근사치(환율 1,400원)이며, 실제 계약 단가로 교체할 것.
+groups:
+  - name: nebula.finops.prices
+    interval: 5m
+    rules:
+      - record: nebula:infra_price_krw:cpu_core_hour
+        expr: vector(56)
+      - record: nebula:infra_price_krw:memory_gib_hour
+        expr: vector(7)
+
+  - name: nebula.finops.cost
+    interval: 5m
+    rules:
+      # 네임스페이스 시간당 인프라 비용 (₩/h)
+      - record: namespace:infra_cost_krw:rate1h
+        expr: |
+          namespace:cpu_requests:sum * on () group_left () nebula:infra_price_krw:cpu_core_hour
+          + on (cluster, namespace)
+          (namespace:memory_requests_bytes:sum / 2^30) * on () group_left () nebula:infra_price_krw:memory_gib_hour
+      - record: cluster:infra_cost_krw:rate1h
+        expr: sum by (cluster) (namespace:infra_cost_krw:rate1h)
+
+      # 리소스 효율: 요청(requests) 대비 실제 사용률 → 낭비 비용
+      - record: namespace:idle_cost_krw:rate1h
+        expr: |
+          namespace:infra_cost_krw:rate1h
+          * on (cluster, namespace)
+          clamp_min(1 - namespace:cpu_usage_vs_request:ratio, 0)
