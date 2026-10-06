@@ -13,7 +13,7 @@ x-otel-env: &otel-env
   LOG_MIN_SEVERITY_NUMBER: "9"
   TRACE_BASELINE_SAMPLING_PERCENT: "10"
   TRACE_LATENCY_THRESHOLD_MS: "1000"
-  TRACE_CRITICAL_SERVICES_REGEX: "^(api-gateway|payment-service)$"
+  TRACE_CRITICAL_SERVICES_REGEX: "^(core-gateway|service-order)$"
   TRACE_CRITICAL_SAMPLING_PERCENT: "50"
   SLI_LATENCY_THRESHOLD_MS: "1000"
 
@@ -40,7 +40,7 @@ services:
       POD_IP: agent
     volumes:
       - ./generated:/conf:ro
-      - ./sample-logs:/var/log/pods:ro
+      - ./pod-logs:/var/log/pods:ro
       - agent-checkpoint:/var/lib/otelcol/agent
     ports: ["4317:4317", "4318:4318"]
     depends_on: [gateway]
@@ -49,7 +49,7 @@ services:
     image: prom/prometheus:v2.54.1
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--web.enable-lifecycle"]
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./generated/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ../../prometheus/rules:/etc/prometheus/rules:ro
     ports: ["9090:9090"]
 
@@ -61,7 +61,7 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ../../grafana/dashboards:/var/lib/grafana/dashboards/nebula:ro
+      - ./generated/dashboards:/var/lib/grafana/dashboards/nebula:ro
     ports: ["3000:3000"]
 
 volumes:
