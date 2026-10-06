@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate Nebula Grafana dashboards (Amazon Managed Grafana) as JSON.
 
-    python3 grafana/generate_dashboards.py          # writes grafana/dashboards/*.json
+    python3 grafana/generate_dashboards.py          # writes grafana/dashboards/*.json (+ extensions/)
 
 Dashboards use datasource *variables* (${amp}, ${cloudwatch}, ${xray}) so the same JSON
 works in every workspace; scripts/provision-grafana.sh creates the datasources and uploads.
@@ -329,6 +329,17 @@ def service_slo():
         prom(f'service:sli_latency_bad:ratio_rate1h{{{S}}}', "1h", ref="A"),
         prom(f'service:sli_latency_bad:ratio_rate5m{{{S}}}', "5m", ref="B")], unit="percentunit", goal=0.05), 12, 8)
 
+    L.row("배포 — canary vs stable (Argo Rollouts, nebula-slo-canary 분석과 같은 신호)")
+    TR = f'{S},span_kind="SPAN_KIND_SERVER",deployment_track!=""'
+    L.add(timeseries("트랙별 에러율", [prom(
+        f'sum by (deployment_track) (rate(traces_span_metrics_calls_total{{{TR},status_code="STATUS_CODE_ERROR"}}[2m]))'
+        f' / sum by (deployment_track) (rate(traces_span_metrics_calls_total{{{TR}}}[2m]))', "{{deployment_track}}")],
+        unit="percentunit", goal=0.01,
+        desc="점선 = 분석 절대 기준 1%. canary 가 stable×2+0.5%p 를 넘거나 1% 를 넘으면 롤백. 롤아웃 중에만 canary 선이 생긴다"), 12, 8)
+    L.add(timeseries("트랙별 P99", [prom(
+        f'histogram_quantile(0.99, sum by (deployment_track, le) (rate(traces_span_metrics_duration_seconds_bucket{{{TR}}}[2m])))',
+        "{{deployment_track}}")], unit="s", goal=1.5, desc="점선 = 분석 기준 1.5s"), 12, 8)
+
     L.row("라우트 / 의존성")
     L.add(table("라우트별 트래픽·에러·P99", f'service_route:requests:rate5m{{{S}}}', unit="reqps",
                 rename={"Value": "req/s", "http_route": "라우트", "http_request_method": "메서드", "service_name": "서비스"}), 12, 9)
@@ -342,7 +353,7 @@ def service_slo():
 
     L.row("로그 ↔ 트레이스 (Flow)")
     L.add(cw_logs("$service 에러 로그 (trace_id 로 X-Ray 이동)", ["/aws/eks/$cluster/application"],
-                  'fields @timestamp, severity_text, body, trace_id, attributes.tenant_id\n'
+                  'fields @timestamp, severity_text, body, trace_id, attributes.logger_name\n'
                   '| filter attributes.service = "$service" and severity_text in ["ERROR", "FATAL"]\n'
                   '| sort @timestamp desc | limit 100'), 16, 10)
     L.add(text("Actionable Links", f"""
@@ -365,63 +376,61 @@ def service_slo():
 
 
 # --------------------------------------------------------------------------
-# 3. Business: Transactional Event Flow + 결제 + 비동기 처리
+# 3. Business: 주문 사가 (service-order ↔ Kafka ↔ service-product) + 비동기 처리
 # --------------------------------------------------------------------------
+SAGA_STAGES = [("order_placed", "1 주문 접수 (order)"), ("purchase_published", "2 purchase 발행 (order)"),
+               ("purchase_consumed", "3 재고 처리 (product)"), ("stock_rejected", "└ 재고 부족 거절 (product)"),
+               ("order_canceled", "└ 보상: 주문 취소 (order)"), ("purchase_publish_failed", "✕ 발행 실패 (order)")]
+
+
 def business():
     L = Layout()
-    L.row("Business Funnel — 장바구니 → 결제 완료")
-    L.add(bargauge("퍼널 단계별 이벤트 (최근 1시간)", [
-        prom(f'sum(funnel:events:increase1h{{{C},funnel_stage="{s}"}})', label, instant=True, ref=chr(65 + i))
-        for i, (s, label) in enumerate([("cart_add", "1 장바구니 담기"), ("checkout_start", "2 결제 시작"),
-                                        ("order_created", "3 주문 생성"), ("payment_requested", "4 결제 요청(PG)"),
-                                        ("payment_succeeded", "5 결제 완료(DB Commit)")])], unit="short"), 10, 8)
-    L.add(bargauge("단계별 Drop (%)", [prom(f'1 - funnel:stage_conversion:ratio1h{{{C}}}', "{{step}}", instant=True)],
-                   unit="percentunit", maxv=1, steps=thresholds((GREEN, None), (YELLOW, 0.3), (RED, 0.5))), 7, 8)
-    L.add(stat("전체 전환율 (1h)", prom(f'funnel:conversion:ratio1h{{{C}}}'), unit="percentunit", decimals=1,
-               steps=thresholds((RED, None), (YELLOW, 0.02), (GREEN, 0.05)),
-               links=[link("Runbook: 전환율 하락", f"{RUNBOOK}#checkoutconversiondrop")]), 7, 8)
-    L.add(timeseries("전환율 추세 (Conversion Rate Trend)", [prom(f'funnel:conversion:ratio1h{{{C}}}', "전체 전환율")],
-                     unit="percentunit", legend=False), 12, 8)
-    L.add(timeseries("장바구니 점유 비율 (봇 재고 잠식 지표)", [
-        prom(f'funnel:cart_hoarding:ratio15m{{{C}}}', "장바구니/결제시작", ref="A"),
-        prom(f'2 * avg_over_time(funnel:cart_hoarding:ratio15m{{{C}}}[1d])', "알림 기준 (1일 평균 × 2)", ref="B")],
-        unit="x", desc="결제 없이 장바구니만 점유하는 봇이 늘면 비율이 평소의 2배를 넘는다",
-        links=[link("Runbook: 장바구니 점유", f"{RUNBOOK}#carthoardingsuspected")]), 12, 8)
+    L.row("주문 사가 — HTTP 지표로는 안 보이는 흐름 단절")
+    L.add(bargauge("단계별 이벤트 (최근 1시간)", [
+        prom(f'sum(saga:events:increase1h{{{C},funnel_stage="{s}"}}) or vector(0)', label, instant=True, ref=chr(65 + i))
+        for i, (s, label) in enumerate(SAGA_STAGES)], unit="short",
+        desc="거절·취소는 3단계의 부분집합. 거절 수와 취소 수가 다르면 보상 누락"), 10, 9)
+    L.add(stat("사가 완료율 (1h)", prom(f'saga:completion:ratio1h{{{C}}}'), unit="percentunit", decimals=1,
+               steps=thresholds((RED, None), (YELLOW, 0.9), (GREEN, 0.97)),
+               desc="재고 차감까지 끝난 주문 / 접수된 주문. 재고 부족 거절도 완료율을 낮춘다"), 7, 9)
+    L.add(stat("발행 실패율 (5m)", prom(f'saga:publish_failure:ratio_rate5m{{{C}}}'), unit="percentunit", decimals=2,
+               steps=thresholds((GREEN, None), (YELLOW, 0.001), (RED, 0.01)),
+               links=[link("Runbook: 발행 실패", f"{RUNBOOK}#sagapublishfailures")]), 7, 9)
+    L.add(timeseries("단계별 처리량 (건/s)", [
+        prom(f'sum by (funnel_stage) (saga:events:rate5m{{{C}}})', "{{funnel_stage}}")], unit="suffix: 건/s",
+        desc="order_placed ≈ purchase_published ≈ purchase_consumed 가 정상. 아래로 벌어지는 선이 끊긴 구간"), 12, 8)
+    L.add(timeseries("단계 사이에 멈춘 건수 (15분 창)", [
+        prom(f'saga:consume_gap:increase15m{{{C}}}', "발행 - 재고 처리", ref="A"),
+        prom(f'saga:compensation_gap:increase15m{{{C}}}', "재고 거절 - 주문 취소 (보상 누락)", ref="B")], unit="short",
+        desc="창 경계의 처리 중 이벤트 때문에 작은 값은 정상. 보상 누락이 쌓이면 SagaCompensationGap",
+        links=[link("Runbook: 보상 누락", f"{RUNBOOK}#sagacompensationgap"), link("Runbook: 사가 정지", f"{RUNBOOK}#sagastalled")]), 12, 8)
+    L.add(timeseries("재고 부족 거절률", [
+        prom(f'saga:stock_rejection:ratio_rate15m{{{C}}}', "15m", ref="A"),
+        prom(f'2 * avg_over_time(saga:stock_rejection:ratio_rate15m{{{C}}}[1d])', "알림 기준 (1일 평균 × 2)", ref="B")],
+        unit="percentunit", desc="시스템 장애가 아니라 품절/프로모션 신호. SLO 와 분리해서 본다",
+        links=[link("Runbook: 재고 거절 급증", f"{RUNBOOK}#stockrejectionspike")]), 12, 8)
+    L.add(table("취소·실패 사유 (5m, 건/s)", f'sort_desc(sum by (funnel_stage, reason) (saga:events:rate5m{{{C},reason!="none"}}) > 0)',
+                unit="suffix: 건/s", rename={"Value": "건/s", "funnel_stage": "단계", "reason": "사유"}), 12, 8)
 
-    L.row("결제 — 실패 원인 분리 (카드 한도 초과 vs PG 타임아웃)")
-    fail = timeseries("실패 원인별 결제 실패 (건/s)", [prom(f'sum by (payment_failure_category) (payment:failures_by_category:rate5m{{{C}}})', "{{payment_failure_category}}")],
-                      unit="suffix: 건/s", stack=True,
-                      desc="gateway 가 PG 응답코드를 카테고리로 정규화. 주황/빨강 = 시스템 원인(우리가 대응), 청록/파랑 = 고객·카드사 원인")
-    # 색은 '원인의 책임 주체'를 뜻한다: 시스템 원인은 따뜻한 색, 고객/카드사 원인은 차가운 색
-    for cat, color in [("pg_timeout", "red"), ("pg_unavailable", "orange"), ("other", "#C4A000"),
-                       ("card_limit_exceeded", "#1F78C1"), ("insufficient_funds", "#5794F2"), ("card_declined", "#2C7BB6"),
-                       ("invalid_card", "#8AB8FF"), ("fraud_suspected", "#7D5BBE"), ("user_cancelled", "#4E9A9A")]:
-        fail["fieldConfig"]["overrides"].append({"matcher": {"id": "byName", "options": cat},
-                                                 "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": color}}]})
-    L.add(fail, 12, 8)
-    L.add(timeseries("PG별 시스템 원인 실패율", [prom(f'payment_pg:system_failure_ratio:rate5m{{{C}}}', "{{payment_pg}}")],
-                     unit="percentunit", goal=0.02, desc="pg_timeout / pg_unavailable / other. 점선 = 알림 기준 2%",
-                     links=[link("Runbook: PG 실패", f"{RUNBOOK}#paymentsystemfailurehigh")]), 12, 8)
-    L.add(timeseries("PG 응답 P99", [prom(f'payment:pg_latency_seconds:p99_5m{{{C}}}', "{{payment_pg}}")], unit="s", goal=3), 8, 8)
-    L.add(timeseries("Logical Error (HTTP 200 + 결제 실패)", [prom(f'payment:logical_error_ratio:rate5m{{{C}}}', "{{payment_pg}}")],
-                     unit="percentunit", goal=0.005, links=[link("Runbook: 논리 오류", f"{RUNBOOK}#paymentlogicalerrors")]), 8, 8)
-    L.add(table("결제수단·카드사별 승인 거절률 (15m)", f'sort_desc(payment_method:decline_ratio:rate15m{{{C}}} > 0)', unit="percentunit",
-                rename={"Value": "거절률", "payment_method": "결제수단", "card_issuer": "카드사"},
-                steps=thresholds((GREEN, None), (YELLOW, 0.05), (RED, 0.1))), 8, 8)
-
-    L.row("비동기 처리 가시성 (API 는 정상인데 후행 로직이 밀리는가)")
-    L.add(timeseries("Kafka Consumer Lag", [prom(f'messaging:kafka_consumer_lag:sum{{{C}}}', "{{group}} / {{topic}}")],
+    L.row("Kafka — 토픽 구간 (purchase: order → product, refund: product → order)")
+    L.add(timeseries("Consumer Lag", [prom(f'messaging:kafka_consumer_lag:sum{{{C}}}', "{{group}} / {{topic}}")],
                      unit="short", links=[link("Runbook: 비동기 적체", f"{RUNBOOK}#asyncbackloggrowing")]), 12, 8)
-    L.add(timeseries("RabbitMQ Ready 메시지", [prom(f'messaging:rabbitmq_backlog:sum{{{C}}}', "{{vhost}} / {{queue}}")], unit="short"), 12, 8)
-    return dashboard("nebula-business", "Nebula / Business Flow & Payments", L, BASE_VARS,
-                     "Transactional Event Flow(퍼널 Drop%), 결제 실패 원인 분리, 논리 오류, 비동기 처리 지연",
-                     links=COMMON_LINKS, tags=["business", "payment"])
+    L.add(timeseries("Consumer 처리 P95 (트레이스)", [
+        prom(f'saga_topic:consumer_latency_seconds:p95_5m{{{C}}}', "{{service_name}} ← {{messaging_destination_name}}")], unit="s"), 12, 8)
+    L.add(timeseries("Producer ack P95 (트레이스)", [
+        prom(f'saga_topic:producer_latency_seconds:p95_5m{{{C}}}', "{{service_name}} → {{messaging_destination_name}}")], unit="s"), 12, 8)
+    L.add(timeseries("Consumer 에러 스팬 (건/s)", [
+        prom(f'saga_topic:consumer_errors:rate5m{{{C}}}', "{{service_name}} ← {{messaging_destination_name}}")], unit="suffix: 건/s",
+        desc="리스너 예외 (역직렬화 실패, 상품 없음 등). 재시도되면 lag 과 함께 증가"), 12, 8)
+    return dashboard("nebula-business", "Nebula / Order Saga & Messaging", L, BASE_VARS,
+                     "주문 사가 단계별 흐름·완료율, 발행 실패, 보상(취소) 누락, 재고 거절, Kafka 구간 지연·적체",
+                     links=COMMON_LINKS, tags=["business", "saga"])
 
 
 # --------------------------------------------------------------------------
-# 4. Tenant: tenant_id 단위 가시화 + Noisy Neighbor + 비용 효율
+# 확장: tenant_id 단위 가시화 + Noisy Neighbor + 비용 효율 — extensions/tenant.rules.yaml
 # --------------------------------------------------------------------------
-def tenant():
+def ext_tenant():
     L = Layout()
     T = f'{C},tenant_id=~"$tenant"'
     L.row("테넌트 Golden Signals")
@@ -459,39 +468,27 @@ def tenant():
                               "query": {"queryType": "DimensionValues", "region": "default", "namespace": "AWS/RDS",
                                         "metricName": "CPUUtilization", "dimensionKey": "DBClusterIdentifier", "refId": "var-aurora"},
                               "current": {}, "options": [], "multi": False, "includeAll": False}]
-    return dashboard("nebula-tenant", "Nebula / Tenants (Multi-tenancy)", L, variables,
-                     "tenant_id 단위 트래픽·에러·지연, 티어별 SLA, Noisy Neighbor 판별, 테넌트 비용 배분/효율",
-                     links=COMMON_LINKS, tags=["tenant"])
+    return dashboard("nebula-ext-tenant", "Nebula / Ext / Tenants", L, variables,
+                     "[확장] tenant_id 단위 트래픽·에러·지연, 티어별 SLA, Noisy Neighbor 판별, 테넌트 비용 배분/효율",
+                     links=COMMON_LINKS, tags=["extension", "tenant"])
 
 
 # --------------------------------------------------------------------------
-# 5. FinOps: Revenue vs Total OpEx, Net Margin 게이지, Burn Rate, 역마진 예측
+# 5. Cost: 인프라 비용 신호 (requests × 단가) + 유휴 리소스
 # --------------------------------------------------------------------------
-def finops():
+def cost():
     L = Layout()
-    L.row("역마진(Margin Erosion) 실시간 탐지")
-    L.add(gauge("Net Margin (1h)", prom(f'nebula:net_margin:ratio1h{{{C}}}'), "percentunit",
-                thresholds((RED, None), (YELLOW, 0), (GREEN, 0.05)), -0.2, 0.3, decimals=1,
-                desc="Threshold Gauge — 5% 미만 Warning(노랑) / 0% 미만 Deficit(빨강)"), 6, 8)
-    L.add(stat("Burn Rate (적자 ₩/h)", prom(f'nebula:margin_burn_krw:rate1h{{{C}}}'), unit="currencyKRW",
-               steps=thresholds((GREEN, None), (RED, 1)),
-               links=[link("Runbook: 역마진", f"{RUNBOOK}#netmargindeficit")]), 6, 8)
-    L.add(stat("BEP 대비 매출", prom(f'nebula:bep_coverage:ratio1h{{{C}}}'), unit="percentunit",
-               steps=thresholds((RED, None), (YELLOW, 1), (GREEN, 1.05)), decimals=0,
-               desc="100% 미만이면 손익분기점(BEP) 미달"), 6, 8)
-    L.add(stat("6시간 뒤 예상 순마진", prom(f'predict_linear(nebula:net_margin:ratio1h{{{C}}}[6h], 6*3600)'), unit="percentunit",
-               steps=thresholds((RED, None), (YELLOW, 0), (GREEN, 0.05)), decimals=1,
-               desc="D+? Deficit Entry: 최근 6시간 추세의 선형 외삽 (MarginDeficitPredicted 알림과 동일 식)"), 6, 8)
-    L.add(timeseries("Revenue vs Total OpEx (₩/h)", [
-        prom(f'nebula:revenue_krw:increase1h{{{C}}}', "Revenue", ref="A"),
-        prom(f'nebula:opex_krw:increase1h{{{C}}}', "Total OpEx", ref="B")], unit="currencyKRW",
-        desc="두 선이 교차하면 BEP. Total OpEx = 원가·PG수수료·배송비·쿠폰 + 인프라"), 12, 9)
-    L.add(timeseries("Net Margin 추세", [prom(f'nebula:net_margin:ratio1h{{{C}}}', "net margin")], unit="percentunit",
-                     goal=0.05, legend=False, desc="점선 = 5% 경고선"), 12, 9)
-    L.add(timeseries("비용 구성 (COGS Dynamics)", [prom(f'nebula:order_cost_krw:increase1h{{{C}}}', "{{cost_type}}")],
-                     unit="currencyKRW", stack=True), 12, 8)
+    L.row("인프라 비용 (requests × 단가, ₩/h)")
+    L.add(stat("클러스터 비용 (₩/h)", prom(f'cluster:infra_cost_krw:rate1h{{{C}}}'), unit="currencyKRW",
+               desc="단가는 prometheus/rules/05-cost 의 상수 (온디맨드 근사치 — 실제 계약 단가로 교체)"), 6, 8)
+    L.add(stat("유휴 비용 (₩/h)", prom(f'sum(namespace:idle_cost_krw:rate1h{{{C}}})'), unit="currencyKRW",
+               steps=thresholds((GREEN, None), (YELLOW, 1000), (RED, 5000))), 6, 8)
+    L.add(stat("유휴 비율", prom(f'sum(namespace:idle_cost_krw:rate1h{{{C}}}) / cluster:infra_cost_krw:rate1h{{{C}}}'), unit="percentunit",
+               steps=thresholds((GREEN, None), (YELLOW, 0.4), (RED, 0.6)), decimals=0,
+               desc="requests 로 예약했지만 쓰지 않는 CPU 비중 (비용 기준)"), 6, 8)
+    L.add(stat("월 환산 (₩, 현재 속도)", prom(f'cluster:infra_cost_krw:rate1h{{{C}}} * 730'), unit="currencyKRW", graph=False), 6, 8)
     L.add(timeseries("인프라 비용 by 네임스페이스 (₩/h)", [prom(f'topk(10, namespace:infra_cost_krw:rate1h{{{C}}})', "{{namespace}}")],
-                     unit="currencyKRW", stack=True, desc="requests × 단가 (prometheus/rules/05-finops 의 단가 상수)"), 12, 8)
+                     unit="currencyKRW", stack=True, desc="requests × 단가 (prometheus/rules/05-cost 의 단가 상수)"), 12, 8)
 
     L.row("Predictive & Efficiency — 유휴 리소스")
     L.add(table("유휴 리소스 점수 (1 = 전부 유휴)", f'sort_desc(namespace:idle_resource_score:ratio1d{{{C}}})', unit="percentunit",
@@ -499,9 +496,9 @@ def finops():
                 steps=thresholds((GREEN, None), (YELLOW, 0.5), (RED, 0.8))), 12, 9)
     L.add(table("유휴로 낭비되는 비용 (₩/h)", f'sort_desc(namespace:idle_cost_krw:rate1h{{{C}}})', unit="currencyKRW",
                 rename={"Value": "₩/h", "namespace": "네임스페이스"}), 12, 9)
-    return dashboard("nebula-finops", "Nebula / FinOps & Margin", L, BASE_VARS,
-                     "Revenue vs Total OpEx, Net Margin 게이지(5%/0%), Burn Rate, 역마진 예측, 유휴 리소스 비용",
-                     links=COMMON_LINKS, tags=["finops"], time_from="now-24h")
+    return dashboard("nebula-cost", "Nebula / Infra Cost & Efficiency", L, BASE_VARS,
+                     "네임스페이스별 인프라 비용(requests × 단가), 유휴 리소스와 낭비 비용 — 다운사이징 근거",
+                     links=COMMON_LINKS, tags=["finops", "cost"], time_from="now-24h")
 
 
 # --------------------------------------------------------------------------
@@ -577,15 +574,107 @@ def pipeline():
                      links=COMMON_LINKS, tags=["pipeline"])
 
 
+# ==========================================================================
+# 확장 대시보드 (grafana/dashboards/extensions/, provision-grafana.sh --extensions)
+# ==========================================================================
+# --------------------------------------------------------------------------
+# 확장: 구매 퍼널 + 결제(PG) — extensions/commerce-payment.rules.yaml
+# --------------------------------------------------------------------------
+def ext_commerce_payment():
+    L = Layout()
+    L.row("Business Funnel — 장바구니 → 결제 완료")
+    L.add(bargauge("퍼널 단계별 이벤트 (최근 1시간)", [
+        prom(f'sum(funnel:events:increase1h{{{C},funnel_stage="{s}"}})', label, instant=True, ref=chr(65 + i))
+        for i, (s, label) in enumerate([("cart_add", "1 장바구니 담기"), ("checkout_start", "2 결제 시작"),
+                                        ("order_created", "3 주문 생성"), ("payment_requested", "4 결제 요청(PG)"),
+                                        ("payment_succeeded", "5 결제 완료(DB Commit)")])], unit="short"), 10, 8)
+    L.add(bargauge("단계별 Drop (%)", [prom(f'1 - funnel:stage_conversion:ratio1h{{{C}}}', "{{step}}", instant=True)],
+                   unit="percentunit", maxv=1, steps=thresholds((GREEN, None), (YELLOW, 0.3), (RED, 0.5))), 7, 8)
+    L.add(stat("전체 전환율 (1h)", prom(f'funnel:conversion:ratio1h{{{C}}}'), unit="percentunit", decimals=1,
+               steps=thresholds((RED, None), (YELLOW, 0.02), (GREEN, 0.05)),
+               links=[link("Runbook: 전환율 하락", f"{RUNBOOK}#checkoutconversiondrop")]), 7, 8)
+    L.add(timeseries("전환율 추세 (Conversion Rate Trend)", [prom(f'funnel:conversion:ratio1h{{{C}}}', "전체 전환율")],
+                     unit="percentunit", legend=False), 12, 8)
+    L.add(timeseries("장바구니 점유 비율 (봇 재고 잠식 지표)", [
+        prom(f'funnel:cart_hoarding:ratio15m{{{C}}}', "장바구니/결제시작", ref="A"),
+        prom(f'2 * avg_over_time(funnel:cart_hoarding:ratio15m{{{C}}}[1d])', "알림 기준 (1일 평균 × 2)", ref="B")],
+        unit="x", desc="결제 없이 장바구니만 점유하는 봇이 늘면 비율이 평소의 2배를 넘는다",
+        links=[link("Runbook: 장바구니 점유", f"{RUNBOOK}#carthoardingsuspected")]), 12, 8)
+
+    L.row("결제 — 실패 원인 분리 (카드 한도 초과 vs PG 타임아웃)")
+    fail = timeseries("실패 원인별 결제 실패 (건/s)", [prom(f'sum by (payment_failure_category) (payment:failures_by_category:rate5m{{{C}}})', "{{payment_failure_category}}")],
+                      unit="suffix: 건/s", stack=True,
+                      desc="gateway 가 PG 응답코드를 카테고리로 정규화. 주황/빨강 = 시스템 원인(우리가 대응), 청록/파랑 = 고객·카드사 원인")
+    # 색은 '원인의 책임 주체'를 뜻한다: 시스템 원인은 따뜻한 색, 고객/카드사 원인은 차가운 색
+    for cat, color in [("pg_timeout", "red"), ("pg_unavailable", "orange"), ("other", "#C4A000"),
+                       ("card_limit_exceeded", "#1F78C1"), ("insufficient_funds", "#5794F2"), ("card_declined", "#2C7BB6"),
+                       ("invalid_card", "#8AB8FF"), ("fraud_suspected", "#7D5BBE"), ("user_cancelled", "#4E9A9A")]:
+        fail["fieldConfig"]["overrides"].append({"matcher": {"id": "byName", "options": cat},
+                                                 "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": color}}]})
+    L.add(fail, 12, 8)
+    L.add(timeseries("PG별 시스템 원인 실패율", [prom(f'payment_pg:system_failure_ratio:rate5m{{{C}}}', "{{payment_pg}}")],
+                     unit="percentunit", goal=0.02, desc="pg_timeout / pg_unavailable / other. 점선 = 알림 기준 2%",
+                     links=[link("Runbook: PG 실패", f"{RUNBOOK}#paymentsystemfailurehigh")]), 12, 8)
+    L.add(timeseries("PG 응답 P99", [prom(f'payment:pg_latency_seconds:p99_5m{{{C}}}', "{{payment_pg}}")], unit="s", goal=3), 8, 8)
+    L.add(timeseries("Logical Error (HTTP 200 + 결제 실패)", [prom(f'payment:logical_error_ratio:rate5m{{{C}}}', "{{payment_pg}}")],
+                     unit="percentunit", goal=0.005, links=[link("Runbook: 논리 오류", f"{RUNBOOK}#paymentlogicalerrors")]), 8, 8)
+    L.add(table("결제수단·카드사별 승인 거절률 (15m)", f'sort_desc(payment_method:decline_ratio:rate15m{{{C}}} > 0)', unit="percentunit",
+                rename={"Value": "거절률", "payment_method": "결제수단", "card_issuer": "카드사"},
+                steps=thresholds((GREEN, None), (YELLOW, 0.05), (RED, 0.1))), 8, 8)
+
+    return dashboard("nebula-ext-payment", "Nebula / Ext / Funnel & Payments", L, BASE_VARS,
+                     "[확장] 구매 퍼널(Drop%), 결제 실패 원인 분리, 논리 오류 — 결제 서비스 도입 시 사용",
+                     links=COMMON_LINKS, tags=["extension", "payment"])
+
+
+# --------------------------------------------------------------------------
+# 확장: Revenue vs Total OpEx, Net Margin 게이지, Burn Rate, 역마진 예측 — extensions/margin.rules.yaml
+# --------------------------------------------------------------------------
+def ext_margin():
+    L = Layout()
+    L.row("역마진(Margin Erosion) 실시간 탐지")
+    L.add(gauge("Net Margin (1h)", prom(f'nebula:net_margin:ratio1h{{{C}}}'), "percentunit",
+                thresholds((RED, None), (YELLOW, 0), (GREEN, 0.05)), -0.2, 0.3, decimals=1,
+                desc="Threshold Gauge — 5% 미만 Warning(노랑) / 0% 미만 Deficit(빨강)"), 6, 8)
+    L.add(stat("Burn Rate (적자 ₩/h)", prom(f'nebula:margin_burn_krw:rate1h{{{C}}}'), unit="currencyKRW",
+               steps=thresholds((GREEN, None), (RED, 1)),
+               links=[link("Runbook: 역마진", f"{RUNBOOK}#netmargindeficit")]), 6, 8)
+    L.add(stat("BEP 대비 매출", prom(f'nebula:bep_coverage:ratio1h{{{C}}}'), unit="percentunit",
+               steps=thresholds((RED, None), (YELLOW, 1), (GREEN, 1.05)), decimals=0,
+               desc="100% 미만이면 손익분기점(BEP) 미달"), 6, 8)
+    L.add(stat("6시간 뒤 예상 순마진", prom(f'predict_linear(nebula:net_margin:ratio1h{{{C}}}[6h], 6*3600)'), unit="percentunit",
+               steps=thresholds((RED, None), (YELLOW, 0), (GREEN, 0.05)), decimals=1,
+               desc="D+? Deficit Entry: 최근 6시간 추세의 선형 외삽 (MarginDeficitPredicted 알림과 동일 식)"), 6, 8)
+    L.add(timeseries("Revenue vs Total OpEx (₩/h)", [
+        prom(f'nebula:revenue_krw:increase1h{{{C}}}', "Revenue", ref="A"),
+        prom(f'nebula:opex_krw:increase1h{{{C}}}', "Total OpEx", ref="B")], unit="currencyKRW",
+        desc="두 선이 교차하면 BEP. Total OpEx = 원가·PG수수료·배송비·쿠폰 + 인프라"), 12, 9)
+    L.add(timeseries("Net Margin 추세", [prom(f'nebula:net_margin:ratio1h{{{C}}}', "net margin")], unit="percentunit",
+                     goal=0.05, legend=False, desc="점선 = 5% 경고선"), 12, 9)
+    L.add(timeseries("비용 구성 (COGS Dynamics)", [prom(f'nebula:order_cost_krw:increase1h{{{C}}}', "{{cost_type}}")],
+                     unit="currencyKRW", stack=True), 12, 8)
+    return dashboard("nebula-ext-margin", "Nebula / Ext / Margin", L, BASE_VARS,
+                     "[확장] Revenue vs Total OpEx, Net Margin 게이지(5%/0%), Burn Rate, 역마진 예측 — 매출·원가 계약 구현 시 사용",
+                     links=COMMON_LINKS, tags=["extension", "finops"], time_from="now-24h")
+
+
+def write(out, d):
+    path = os.path.join(out, f"{d['uid']}.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    print(f"wrote {os.path.relpath(path)} ({len(d['panels'])} panels)")
+
+
+CORE = (overview, service_slo, business, cost, datastores, pipeline)
+EXTENSIONS = (ext_commerce_payment, ext_tenant, ext_margin)
+
+
 def main():
-    os.makedirs(OUT, exist_ok=True)
-    for fn in (overview, service_slo, business, tenant, finops, datastores, pipeline):
-        d = fn()
-        path = os.path.join(OUT, f"{d['uid']}.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-        print(f"wrote {os.path.relpath(path)} ({len(d['panels'])} panels)")
+    for out, fns in ((OUT, CORE), (os.path.join(OUT, "extensions"), EXTENSIONS)):
+        os.makedirs(out, exist_ok=True)
+        for fn in fns:
+            write(out, fn())
 
 
 if __name__ == "__main__":

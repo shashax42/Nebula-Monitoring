@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # Amazon Managed Grafana 에 Nebula 데이터소스(AMP / CloudWatch / X-Ray)와 대시보드를 올린다.
 #
-#   ./scripts/provision-grafana.sh [env]          # 기본 env=dev
+#   ./scripts/provision-grafana.sh [env]                 # 기본 env=dev, 기본 대시보드만
+#   ./scripts/provision-grafana.sh dev --extensions      # 확장(테넌트·결제·마진) 대시보드도 업로드
 #
 # 필요: aws CLI, terraform, curl, jq / Terraform apply 완료 상태
 # 동작:
 #   1) 워크스페이스 서비스 계정(nebula-provisioner, ADMIN) 확보 → 15분짜리 토큰 발급
 #   2) 데이터소스 upsert (uid 고정: amp / cloudwatch / xray, 인증 = 워크스페이스 IAM 역할)
-#   3) grafana/dashboards/*.json 을 "Nebula" 폴더에 overwrite 업로드
+#   3) grafana/dashboards/*.json 을 "Nebula" 폴더에 overwrite 업로드 (--extensions: extensions/*.json 도)
 #   4) 토큰 삭제
 set -euo pipefail
 
 ENVIRONMENT="${1:-dev}"
+WITH_EXTENSIONS="${2:-}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TF_DIR="${ROOT_DIR}/terraform/environments/${ENVIRONMENT}"
 REGION="${AWS_REGION:-ap-northeast-2}"
@@ -75,7 +77,9 @@ echo "▶ folder"
 api -X POST "${GRAFANA_URL}/api/folders" -d '{"uid":"nebula","title":"Nebula"}' >/dev/null 2>&1 || true
 
 echo "▶ dashboards"
-for f in "${ROOT_DIR}"/grafana/dashboards/*.json; do
+DASHBOARDS=("${ROOT_DIR}"/grafana/dashboards/*.json)
+[[ "$WITH_EXTENSIONS" == "--extensions" ]] && DASHBOARDS+=("${ROOT_DIR}"/grafana/dashboards/extensions/*.json)
+for f in "${DASHBOARDS[@]}"; do
   jq '{dashboard: (. + {id: null}), folderUid: "nebula", overwrite: true, message: "provisioned by scripts/provision-grafana.sh"}' "$f" \
     | api -X POST "${GRAFANA_URL}/api/dashboards/db" -d @- >/dev/null
   echo "  ✓ $(jq -r .title "$f")"
