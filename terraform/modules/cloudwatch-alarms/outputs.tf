@@ -17,14 +17,14 @@ output "alarm_arns" {
   description = "ARNs of the SLA / business / pipeline alarms"
   value = merge(
     {
-      availability_sla       = aws_cloudwatch_metric_alarm.availability_sla.arn
-      error_rate             = aws_cloudwatch_metric_alarm.error_rate.arn
-      latency_slo            = aws_cloudwatch_metric_alarm.latency_slo.arn
-      payment_pg_timeout     = aws_cloudwatch_metric_alarm.payment_pg_timeout.arn
-      payment_failure_rate   = aws_cloudwatch_metric_alarm.payment_failure_rate.arn
-      payment_logical_errors = aws_cloudwatch_metric_alarm.payment_logical_errors.arn
-      service_degradation    = aws_cloudwatch_composite_alarm.service_degradation.arn
+      availability_sla    = aws_cloudwatch_metric_alarm.availability_sla.arn
+      error_rate          = aws_cloudwatch_metric_alarm.error_rate.arn
+      latency_slo         = aws_cloudwatch_metric_alarm.latency_slo.arn
+      service_degradation = aws_cloudwatch_composite_alarm.service_degradation.arn
     },
+    { for a in aws_cloudwatch_metric_alarm.payment_pg_timeout : "payment_pg_timeout" => a.arn },
+    { for a in aws_cloudwatch_metric_alarm.payment_failure_rate : "payment_failure_rate" => a.arn },
+    { for a in aws_cloudwatch_metric_alarm.payment_logical_errors : "payment_logical_errors" => a.arn },
     { for k, v in aws_cloudwatch_metric_alarm.log_ingestion_stopped : "log_ingestion_stopped" => v.arn },
     { for k, v in aws_cloudwatch_metric_alarm.service_availability : "availability_${k}" => v.arn },
   )
@@ -35,10 +35,10 @@ output "critical_alarms" {
   value = concat(
     [
       aws_cloudwatch_metric_alarm.availability_sla.arn,
-      aws_cloudwatch_metric_alarm.payment_pg_timeout.arn,
-      aws_cloudwatch_metric_alarm.payment_logical_errors.arn,
       aws_cloudwatch_composite_alarm.service_degradation.arn,
     ],
+    [for a in aws_cloudwatch_metric_alarm.payment_pg_timeout : a.arn],
+    [for a in aws_cloudwatch_metric_alarm.payment_logical_errors : a.arn],
     [for a in aws_cloudwatch_metric_alarm.log_ingestion_stopped : a.arn],
     [for a in aws_cloudwatch_metric_alarm.service_availability : a.arn],
   )

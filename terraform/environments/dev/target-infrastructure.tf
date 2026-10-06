@@ -26,25 +26,38 @@ variable "enable_target_monitoring" {
 # terraform_new의 state를 data source로 참조
 # cluster_name을 자동으로 가져옴
 # ========================================
+variable "target_state_bucket" {
+  description = "Nebula-Platform state 버킷 (Nebula-Platform environments/dev/terraform.tf 의 backend bucket 과 같은 값)"
+  type        = string
+  default     = "lucia-real-buckets"
+}
+
+variable "target_state_key" {
+  description = "Nebula-Platform state 경로"
+  type        = string
+  default     = "env/dev/terraform.tfstate"
+}
+
 data "terraform_remote_state" "target_infra" {
   count   = var.enable_target_monitoring ? 1 : 0
   backend = "s3"
 
   config = {
-    bucket  = "lucia-real-buckets"        # terraform_new의 실제 버킷
-    key     = "env/dev/terraform.tfstate" # terraform_new의 실제 state 경로
-    region  = "ap-northeast-2"
-    profile = "monitoring-admin"
+    bucket  = var.target_state_bucket
+    key     = var.target_state_key
+    region  = var.region
+    profile = var.aws_profile
   }
 }
 
-# 타겟 EKS 클러스터 정보 (remote state에서 자동으로 가져옴)
+# 타겟 인프라 정보 (Nebula-Platform outputs 에서 자동으로 가져옴)
 locals {
-  # terraform_new의 outputs.cluster_name을 자동으로 읽어옴
-  target_cluster_name = var.enable_target_monitoring ? try(
-    data.terraform_remote_state.target_infra[0].outputs.cluster_name,
-    ""
-  ) : ""
+  target_outputs = try(data.terraform_remote_state.target_infra[0].outputs, {})
+
+  target_cluster_name = try(local.target_outputs.cluster_name, "")
+  # 데이터 스토어 알람 대상 (Nebula-Platform outputs.tf: aurora_cluster_identifiers, redis_replication_group_ids)
+  target_aurora_cluster_identifiers  = try(tolist(local.target_outputs.aurora_cluster_identifiers), [])
+  target_redis_replication_group_ids = try(tolist(local.target_outputs.redis_replication_group_ids), [])
 }
 
 # ========================================

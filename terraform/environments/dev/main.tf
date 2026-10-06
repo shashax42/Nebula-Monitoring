@@ -46,7 +46,19 @@ locals {
   application_log_group_name = "/aws/eks/${local.monitored_cluster_name}/application"
 
   # prometheus/rules/*.rules.yaml → AMP 룰 그룹 네임스페이스 (파일 1개 = 네임스페이스 1개)
-  prometheus_rule_files = fileset("${local.repo_root}/prometheus/rules", "*.rules.yaml")
+  # extensions/(테넌트·결제·마진)는 enable_business_extensions 일 때만 올린다
+  prometheus_rule_groups = merge(
+    { for f in fileset("${local.repo_root}/prometheus/rules", "*.rules.yaml") :
+      "nebula-${trimsuffix(f, ".rules.yaml")}" => file("${local.repo_root}/prometheus/rules/${f}")
+    },
+    var.enable_business_extensions ? { for f in fileset("${local.repo_root}/prometheus/rules/extensions", "*.rules.yaml") :
+      "nebula-ext-${trimsuffix(f, ".rules.yaml")}" => file("${local.repo_root}/prometheus/rules/extensions/${f}")
+    } : {}
+  )
+
+  # 데이터 스토어 알람 대상: 직접 지정한 값 > Nebula-Platform output (remote state)
+  aurora_cluster_identifiers  = length(var.aurora_cluster_identifiers) > 0 ? var.aurora_cluster_identifiers : local.target_aurora_cluster_identifiers
+  redis_replication_group_ids = length(var.redis_replication_group_ids) > 0 ? var.redis_replication_group_ids : local.target_redis_replication_group_ids
 }
 
 # ==========================================================================
@@ -59,10 +71,7 @@ module "amp" {
   log_retention_days = var.log_retention_days
   tags               = local.common_tags
 
-  rule_groups = {
-    for f in local.prometheus_rule_files :
-    "nebula-${trimsuffix(f, ".rules.yaml")}" => file("${local.repo_root}/prometheus/rules/${f}")
-  }
+  rule_groups = local.prometheus_rule_groups
 
   enable_alert_manager = true
   alert_manager_definition = templatefile("${local.repo_root}/prometheus/alertmanager/alertmanager.yaml.tftpl", {
@@ -122,7 +131,7 @@ module "log_analytics" {
 }
 
 # ==========================================================================
-# 콜드 데이터: 감사/결제 로그 → S3 7년 보관 (Hot 은 CloudWatch, TTL 경과 후 S3 에서만 조회)
+# 콜드 데이터: 감사 로그 → S3 7년 보관(정책값, 법정 최소 5년) (Hot 은 CloudWatch, TTL 경과 후 S3 에서만 조회)
 # ==========================================================================
 module "log_archive" {
   source = "../../modules/log-archive"
@@ -205,10 +214,10 @@ output "grafana_workspace_id" {
 }
 
 # ==========================================================================
-# CloudWatch Alarms / SNS (Alertmanager 대체): SLA 위반·에러·지연·결제·데이터스토어·파이프라인
+# CloudWatch Alarms / SNS (Alertmanager 대체): SLA 위반·에러·지연·데이터스토어·파이프라인 (+ 확장: 결제)
 # ==========================================================================
 data "aws_elasticache_replication_group" "redis" {
-  for_each             = toset(var.redis_replication_group_ids)
+  for_each             = toset(local.redis_replication_group_ids)
   replication_group_id = each.value
 }
 
@@ -231,8 +240,11 @@ module "cloudwatch_alarms" {
   # Pipeline heartbeat (AMP 와 독립된 감시 경로)
   application_log_group_name = local.application_log_group_name
 
-  # Data stores (terraform_new: Aurora MySQL / ElastiCache Redis)
-  aurora_cluster_identifiers = var.aurora_cluster_identifiers
+  # 확장: 결제(PG) 알람 (결제 서비스 + collector 오버레이가 있을 때)
+  enable_payment_alarms = var.enable_business_extensions
+
+  # Data stores (Nebula-Platform: Aurora MySQL / ElastiCache Redis)
+  aurora_cluster_identifiers = local.aurora_cluster_identifiers
   redis_cache_cluster_ids    = flatten([for rg in data.aws_elasticache_replication_group.redis : tolist(rg.member_clusters)])
 
   tags = local.common_tags
@@ -261,17 +273,15 @@ module "xray" {
 
   # Sampling configuration (X-Ray SDK 사용 워크로드용. OTel 워크로드는 gateway tail_sampling 사용)
   default_fixed_rate             = 0.1 # 10% for dev
-  critical_services              = ["api", "auth", "payment"]
+  critical_services              = ["core-gateway", "service-order"]
   critical_service_sampling_rate = 0.5 # 50% for critical services
 
-  # Microservices to track
+  # Microservices to track (nebula-services 의 spring.application.name = OTel service.name)
   microservices = [
-    "api-gateway",
-    "auth-service",
-    "user-service",
-    "payment-service",
-    "notification-service",
-    "inventory-service"
+    "core-gateway",
+    "service-account",
+    "service-order",
+    "service-product",
   ]
 
   # Performance thresholds

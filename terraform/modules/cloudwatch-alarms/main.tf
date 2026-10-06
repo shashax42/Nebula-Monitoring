@@ -12,10 +12,10 @@ terraform {
 # ==========================================================================
 # CloudWatch Alarms / SNS  (Alertmanager 대체 계층)
 #
-#  - SLA 위반 / 에러 / 지연 / 결제 알람: gateway 가 EMF 로 보내는 Nebula/Application 메트릭
+#  - SLA 위반 / 에러 / 지연 알람: gateway 가 EMF 로 보내는 Nebula/Application 메트릭
 #      Requests, Errors, SlowRequests (Environment[, Service])
-#      PaymentRequests (Environment, Outcome | FailureCategory | PaymentPg+Outcome)
-#      PaymentLogicalErrors (Environment[, PaymentPg])
+#  - (확장, enable_payment_alarms) 결제 알람: collector 오버레이 values-extension-business.yaml 이 보내는
+#      PaymentRequests (Environment, Outcome | FailureCategory | PaymentPg+Outcome), PaymentLogicalErrors
 #  - 데이터 스토어: AWS/RDS (Aurora), AWS/ElastiCache (Redis) 기본 메트릭
 #  - 파이프라인 독립 감시: AWS/Logs IncomingLogEvents (AMP 경로가 죽어도 동작)
 #  - 모든 알림은 심각도별 SNS 토픽 2개로 수렴 (AMP Alertmanager 도 같은 토픽 사용)
@@ -307,9 +307,11 @@ resource "aws_cloudwatch_metric_alarm" "service_availability" {
 }
 
 # --------------------------------------------------------------------------
-# 결제 (비즈니스 완결성)
+# 결제 (확장: 결제 서비스 + collector 오버레이가 있을 때만)
 # --------------------------------------------------------------------------
 resource "aws_cloudwatch_metric_alarm" "payment_pg_timeout" {
+  count = var.enable_payment_alarms ? 1 : 0
+
   alarm_name          = "${var.environment}-payment-pg-timeout"
   alarm_description   = "PG 타임아웃 실패 비율 > ${var.payment_pg_timeout_threshold}%. 카드 한도 초과 등 고객 원인 실패와 분리된 시스템 원인. 런북: docs/RUNBOOK.md#paymentsystemfailurehigh"
   comparison_operator = "GreaterThanThreshold"
@@ -350,6 +352,8 @@ resource "aws_cloudwatch_metric_alarm" "payment_pg_timeout" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "payment_failure_rate" {
+  count = var.enable_payment_alarms ? 1 : 0
+
   alarm_name          = "${var.environment}-payment-failure-rate"
   alarm_description   = "전체 결제 실패율 > ${var.payment_failure_threshold}% (고객 원인 포함). 카테고리별 분해는 Grafana 'Nebula / Business' 대시보드. 런북: docs/RUNBOOK.md#paymentsystemfailurehigh"
   comparison_operator = "GreaterThanThreshold"
@@ -390,6 +394,8 @@ resource "aws_cloudwatch_metric_alarm" "payment_failure_rate" {
 
 # HTTP 200 인데 결제 실패 — HTTP 지표로는 보이지 않는 조용한 실패
 resource "aws_cloudwatch_metric_alarm" "payment_logical_errors" {
+  count = var.enable_payment_alarms ? 1 : 0
+
   alarm_name          = "${var.environment}-payment-logical-errors"
   alarm_description   = "결제 논리 오류(HTTP 2xx + 결제 실패) ${var.payment_logical_error_threshold}건 초과 / ${var.metric_period / 60}분. 런북: docs/RUNBOOK.md#paymentlogicalerrors"
   comparison_operator = "GreaterThanThreshold"
@@ -459,7 +465,7 @@ resource "aws_cloudwatch_metric_alarm" "aurora_deadlocks" {
   for_each = toset(var.aurora_cluster_identifiers)
 
   alarm_name          = "${var.environment}-aurora-${each.value}-deadlocks"
-  alarm_description   = "Aurora ${each.value} 데드락 발생 (초당 평균 > ${var.aurora_deadlock_threshold}). 테넌트별 DB 점유율(tenant:db_time_share:ratio5m)과 함께 확인. 런북: docs/RUNBOOK.md#tenantnoisyneighbor"
+  alarm_description   = "Aurora ${each.value} 데드락 발생 (초당 평균 > ${var.aurora_deadlock_threshold}). 트랜잭션이 겹치는 서비스(재고 차감 등)의 DB 스팬 지연과 함께 확인. 런북: docs/RUNBOOK.md#auroracontention"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
   metric_name         = "Deadlocks"
@@ -563,14 +569,13 @@ resource "aws_cloudwatch_metric_alarm" "redis_evictions" {
 # --------------------------------------------------------------------------
 resource "aws_cloudwatch_composite_alarm" "service_degradation" {
   alarm_name        = "${var.environment}-service-degradation"
-  alarm_description = "SLA 위반 또는 (에러율 + 지연 SLO 동시 위반) 또는 결제 PG 타임아웃 → 고객 영향 확정"
+  alarm_description = "SLA 위반 또는 (에러율 + 지연 SLO 동시 위반) [또는 결제 PG 타임아웃] → 고객 영향 확정"
   actions_enabled   = true
 
-  alarm_rule = join(" OR ", [
+  alarm_rule = join(" OR ", concat([
     "ALARM(${aws_cloudwatch_metric_alarm.availability_sla.alarm_name})",
     "(ALARM(${aws_cloudwatch_metric_alarm.error_rate.alarm_name}) AND ALARM(${aws_cloudwatch_metric_alarm.latency_slo.alarm_name}))",
-    "ALARM(${aws_cloudwatch_metric_alarm.payment_pg_timeout.alarm_name})",
-  ])
+  ], [for a in aws_cloudwatch_metric_alarm.payment_pg_timeout : "ALARM(${a.alarm_name})"]))
 
   alarm_actions = [aws_sns_topic.critical.arn]
   ok_actions    = [aws_sns_topic.critical.arn]
