@@ -1,3 +1,5 @@
+# 대안: Micrometer 를 쓰지 않는 워크로드용 Operator 자동 계측 (nebula-services 는 Micrometer 사용 → 미적용).
+#        tenant 관련 설정은 확장 계약(docs/TELEMETRY_CONTRACT.md 7장)용.
 # OpenTelemetry Operator 자동 계측 설정 (docs/AUTO_INSTRUMENTATION.md, docs/TELEMETRY_CONTRACT.md)
 #   - 앱은 같은 노드의 agent(Service otel-collector, internalTrafficPolicy=Local)로 전송
 #   - 샘플링은 gateway 의 tail sampling 이 결정하므로 SDK 는 전부 보낸다 (parentbased_always_on)

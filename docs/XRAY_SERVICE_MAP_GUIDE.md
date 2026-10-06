@@ -31,7 +31,7 @@ otel:
       endpoint: http://otel-collector.monitoring.svc:4317
   resource:
     attributes:
-      service.name: payment-service
+      service.name: service-order
       service.namespace: nebula
       deployment.environment: ${ENVIRONMENT}
 ```
@@ -220,7 +220,7 @@ aws xray batch-get-traces \
 # CLI로 그룹 생성
 aws xray create-group \
   --group-name "Critical-Path" \
-  --filter-expression 'service("api-gateway") OR service("payment-service")'
+  --filter-expression 'service("core-gateway") OR service("service-order")'
 ```
 
 ## 🎯 샘플링 전략

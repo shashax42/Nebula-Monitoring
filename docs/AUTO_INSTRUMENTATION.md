@@ -1,10 +1,14 @@
 # OpenTelemetry Auto-Instrumentation 가이드
 
-> **Nebula 표준 설정은 `k8s/otel-operator/instrumentation.yaml` 이다.** 아래 예시보다 우선한다.
+> **nebula-services 는 에이전트 없이 Micrometer 로 계측한다** (Spring Boot 3: `micrometer-tracing-bridge-otel` +
+> `opentelemetry-exporter-otlp` + `micrometer-registry-otlp`, 설정은 각 서비스 `config/monitoring.yml`).
+> Micrometer 속성(`uri`/`method`/`status`)은 gateway 가 OTel 표준으로 바꾸므로 앱에서 따로 맞출 필요가 없다.
+> 데이터 규약: [TELEMETRY_CONTRACT.md](TELEMETRY_CONTRACT.md)
+>
+> 이 문서의 Operator 자동 계측(`k8s/otel-operator/instrumentation.yaml`)은 **Micrometer 를 쓸 수 없는 워크로드**(다른 언어,
+> 소스 수정이 어려운 서드파티)를 위한 대안이다. 같은 서비스에 Micrometer 와 Java agent 를 함께 쓰면 스팬이 중복된다.
 > - 샘플러 `parentbased_always_on`: 샘플링은 gateway tail sampling 이 결정한다 (SDK 에서 버리면 SLO 지표가 과소 집계됨)
 > - 엔드포인트 `http://otel-collector.monitoring.svc:4318` (같은 노드의 agent)
-> - `x-tenant-id` 헤더 캡처 + Baggage 의 `tenant.id` 를 span 속성으로 복사
-> - 데이터 규약: [TELEMETRY_CONTRACT.md](TELEMETRY_CONTRACT.md)
 
 ##OTEL Operator 설치
 
