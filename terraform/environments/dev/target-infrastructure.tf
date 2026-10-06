@@ -33,9 +33,20 @@ variable "target_state_bucket" {
 }
 
 variable "target_state_key" {
-  description = "Nebula-Platform state 경로"
+  description = "Nebula-Platform state 경로. 비우면 env/<environment>/terraform.tfstate (Nebula-Platform environments/<env>/backend.hcl 의 key)"
   type        = string
-  default     = "env/dev/terraform.tfstate"
+  default     = ""
+}
+
+# 이 루트 하나로 dev / staging / prod 를 workspace 로 나눠 운영한다 (README "환경별 적용").
+# 다른 환경의 state 에 엉뚱한 environment 값으로 apply 하는 실수를 plan 단계에서 막는다.
+resource "terraform_data" "workspace_guard" {
+  lifecycle {
+    precondition {
+      condition     = terraform.workspace == "default" ? var.environment == "dev" : terraform.workspace == var.environment
+      error_message = "workspace(${terraform.workspace}) 와 environment(${var.environment}) 가 다릅니다. default workspace 는 dev, 그 외에는 workspace 이름 = environment 여야 합니다."
+    }
+  }
 }
 
 data "terraform_remote_state" "target_infra" {
@@ -44,7 +55,7 @@ data "terraform_remote_state" "target_infra" {
 
   config = {
     bucket  = var.target_state_bucket
-    key     = var.target_state_key
+    key     = var.target_state_key != "" ? var.target_state_key : "env/${var.environment}/terraform.tfstate"
     region  = var.region
     profile = var.aws_profile
   }
@@ -58,6 +69,8 @@ locals {
   # 데이터 스토어 알람 대상 (Nebula-Platform outputs.tf: aurora_cluster_identifiers, redis_replication_group_ids)
   target_aurora_cluster_identifiers  = try(tolist(local.target_outputs.aurora_cluster_identifiers), [])
   target_redis_replication_group_ids = try(tolist(local.target_outputs.redis_replication_group_ids), [])
+  target_rds_instance_identifiers    = try(tolist(local.target_outputs.rds_instance_identifiers), [])
+  target_sqs_queue_names             = try(tolist(local.target_outputs.sqs_queue_names), [])
 }
 
 # ========================================
