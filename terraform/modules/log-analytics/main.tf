@@ -23,7 +23,7 @@ locals {
   # 로그 클래스별 Hot 보존 기간(TTL). 장기 보관은 log-archive 모듈(S3, 7년)이 담당
   log_groups = {
     application = { retention = var.retention_days.application, desc = "앱 stdout/OTLP 로그 (정제·마스킹 후)" }
-    audit       = { retention = var.retention_days.audit, desc = "감사/결제 로그 (S3 7년 아카이브 대상)" }
+    audit       = { retention = var.retention_days.audit, desc = "감사 로그 (S3 7년 아카이브 대상)" }
     events      = { retention = var.retention_days.events, desc = "Kubernetes Warning 이벤트" }
     metrics     = { retention = var.retention_days.metrics, desc = "EMF 원본 (CloudWatch 메트릭 추출용)" }
   }

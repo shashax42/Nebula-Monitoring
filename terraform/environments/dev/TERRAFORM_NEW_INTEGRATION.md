@@ -106,7 +106,7 @@ kubectl logs -n monitoring -l app.kubernetes.io/name=otel-collector --prefix --t
 ### 4.2 CloudWatch 로그 그룹
 
 - `/aws/eks/<cluster_name>/application` — 앱 로그 (정제·마스킹 후)
-- `/aws/eks/<cluster_name>/audit` — 감사/결제 로그 (S3 7년 아카이브)
+- `/aws/eks/<cluster_name>/audit` — 감사 로그 (S3 아카이브, 7년 정책값 · 법정 최소 5년)
 - `/aws/eks/<cluster_name>/events` — Kubernetes Warning 이벤트
 - `/aws/eks/<cluster_name>/metrics` — EMF (CloudWatch 메트릭 추출용)
 

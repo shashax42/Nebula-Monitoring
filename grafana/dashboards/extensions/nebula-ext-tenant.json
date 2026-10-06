@@ -1,9 +1,10 @@
 {
-  "uid": "nebula-tenant",
-  "title": "Nebula / Tenants (Multi-tenancy)",
-  "description": "tenant_id 단위 트래픽·에러·지연, 티어별 SLA, Noisy Neighbor 판별, 테넌트 비용 배분/효율",
+  "uid": "nebula-ext-tenant",
+  "title": "Nebula / Ext / Tenants",
+  "description": "[확장] tenant_id 단위 트래픽·에러·지연, 티어별 SLA, Noisy Neighbor 판별, 테넌트 비용 배분/효율",
   "tags": [
     "nebula",
+    "extension",
     "tenant"
   ],
   "timezone": "browser",

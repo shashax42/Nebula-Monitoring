@@ -1,11 +1,11 @@
-# promtool test rules prometheus/tests/rules.test.yaml
+# promtool test rules rules.test.yaml   (기본 배포 규칙)
 # 규칙이 "의도한 값"을 만들고 "의도한 순간"에 알림이 발화하는지 검증한다.
+# 확장 규칙(extensions/)은 extensions.test.yaml
 rule_files:
   - ../rules/01-kubernetes.rules.yaml
   - ../rules/02-service-slo.rules.yaml
-  - ../rules/03-tenant.rules.yaml
   - ../rules/04-business.rules.yaml
-  - ../rules/05-finops.rules.yaml
+  - ../rules/05-cost.rules.yaml
   - ../rules/06-anomaly.rules.yaml
   - ../rules/07-pipeline.rules.yaml
 
@@ -75,95 +75,123 @@ tests:
             value: 1
 
   # ------------------------------------------------------------------
-  # 결제 퍼널 전환율 + PG 실패 분류
+  # 주문 사가: 발행 실패 3% + 재고 거절 10건/분 중 취소 4건/분 → 발행 실패·보상 누락 알림
+  #   완료율 = (소비 97 - 거절 10) / 접수 100 = 0.87, 재고 거절률 = 10 / 97
   # ------------------------------------------------------------------
   - interval: 1m
     input_series:
-      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",funnel_stage="cart_add",tenant_id="t1"}'
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",job="service-order",funnel_stage="order_placed",reason="none"}'
         values: '0+100x90'
-      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",funnel_stage="checkout_start",tenant_id="t1"}'
-        values: '0+60x90'
-      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",funnel_stage="order_created",tenant_id="t1"}'
-        values: '0+54x90'
-      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",funnel_stage="payment_requested",tenant_id="t1"}'
-        values: '0+54x90'
-      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",funnel_stage="payment_succeeded",tenant_id="t1"}'
-        values: '0+45x90'
-      - series: 'nebula_payment_requests_total{cluster="c1",environment="dev",payment_pg="kcp",payment_method="card",payment_outcome="success",payment_failure_category="none"}'
-        values: '0+90x90'
-      - series: 'nebula_payment_requests_total{cluster="c1",environment="dev",payment_pg="kcp",payment_method="card",payment_outcome="failure",payment_failure_category="pg_timeout"}'
-        values: '0+5x90'
-      - series: 'nebula_payment_requests_total{cluster="c1",environment="dev",payment_pg="kcp",payment_method="card",payment_outcome="failure",payment_failure_category="card_limit_exceeded"}'
-        values: '0+5x90'
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",job="service-order",funnel_stage="purchase_published",reason="none"}'
+        values: '0+97x90'
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",job="service-order",funnel_stage="purchase_publish_failed",reason="publish_error"}'
+        values: '0+3x90'
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",job="service-product",funnel_stage="purchase_consumed",reason="none"}'
+        values: '0+97x90'
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",job="service-product",funnel_stage="stock_rejected",reason="out_of_stock"}'
+        values: '0+10x90'
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",job="service-order",funnel_stage="order_canceled",reason="out_of_stock"}'
+        values: '0+4x90'
     promql_expr_test:
-      - expr: round(funnel:stage_conversion:ratio1h, 0.001)
-        eval_time: 70m
+      - expr: round(saga:publish_failure:ratio_rate5m, 0.001)
+        eval_time: 30m
         exp_samples:
-          - labels: '{cluster="c1",environment="dev",step="1_cart_to_checkout"}'
-            value: 0.6
-          - labels: '{cluster="c1",environment="dev",step="2_checkout_to_order"}'
-            value: 0.9
-          - labels: '{cluster="c1",environment="dev",step="3_order_to_payment_request"}'
-            value: 1
-          - labels: '{cluster="c1",environment="dev",step="4_payment_request_to_success"}'
-            value: 0.833
-      - expr: round(funnel:conversion:ratio1h, 0.01)
+          - labels: '{cluster="c1",environment="dev"}'
+            value: 0.03
+      - expr: round(saga:completion:ratio1h, 0.001)
         eval_time: 70m
         exp_samples:
           - labels: '{cluster="c1",environment="dev"}'
-            value: 0.45
-      # 카드 한도 초과(고객 원인)는 시스템 실패율에서 제외 → 5%
-      - expr: round(payment_pg:system_failure_ratio:rate5m, 0.001)
+            value: 0.87
+      - expr: round(saga:stock_rejection:ratio_rate15m, 0.001)
         eval_time: 30m
         exp_samples:
-          - labels: '{cluster="c1",environment="dev",payment_pg="kcp"}'
-            value: 0.05
-      - expr: count by (payment_pg) (ALERTS{alertname="PaymentSystemFailureHigh", alertstate="firing"})
-        eval_time: 30m
+          - labels: '{cluster="c1",environment="dev"}'
+            value: 0.103
+      # 15분간 거절 150건 - 취소 60건
+      - expr: saga:compensation_gap:increase15m
+        eval_time: 40m
         exp_samples:
-          - labels: '{payment_pg="kcp"}'
+          - labels: '{__name__="saga:compensation_gap:increase15m",cluster="c1",environment="dev"}'
+            value: 90
+      - expr: count by (alertname) (ALERTS{alertstate="firing", alertname=~"Saga.*"})
+        eval_time: 40m
+        exp_samples:
+          - labels: '{alertname="SagaCompensationGap"}'
+            value: 1
+          - labels: '{alertname="SagaPublishFailures"}'
             value: 1
 
   # ------------------------------------------------------------------
-  # 테넌트: Noisy Neighbor + Enterprise SLA 번레이트
+  # 주문 사가 정지: purchase 는 계속 발행되는데 service-product 처리 0건 (컨슈머 다운)
   # ------------------------------------------------------------------
   - interval: 1m
     input_series:
-      - series: 'traces_tenant_metrics_duration_seconds_sum{cluster="c1",environment="dev",tenant_id="big",db_system="mysql",span_kind="SPAN_KIND_CLIENT"}'
-        values: '0+60x60'
-      - series: 'traces_tenant_metrics_duration_seconds_sum{cluster="c1",environment="dev",tenant_id="small1",db_system="mysql",span_kind="SPAN_KIND_CLIENT"}'
-        values: '0+6x60'
-      - series: 'traces_tenant_metrics_duration_seconds_sum{cluster="c1",environment="dev",tenant_id="small2",db_system="mysql",span_kind="SPAN_KIND_CLIENT"}'
-        values: '0+6x60'
-      - series: 'traces_tenant_metrics_calls_total{cluster="c1",environment="dev",tenant_id="acme",tenant_tier="enterprise",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_OK"}'
-        values: '0+100x60'
-      - series: 'traces_tenant_metrics_calls_total{cluster="c1",environment="dev",tenant_id="acme",tenant_tier="enterprise",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_ERROR"}'
-        values: '0+5x60'
-    promql_expr_test:
-      - expr: round(tenant:db_time_share:ratio5m, 0.001)
-        eval_time: 30m
-        exp_samples:
-          - labels: '{cluster="c1",environment="dev",tenant_id="big",db_system="mysql"}'
-            value: 0.833
-          - labels: '{cluster="c1",environment="dev",tenant_id="small1",db_system="mysql"}'
-            value: 0.083
-          - labels: '{cluster="c1",environment="dev",tenant_id="small2",db_system="mysql"}'
-            value: 0.083
-      - expr: count by (tenant_id) (ALERTS{alertname="TenantNoisyNeighbor", alertstate="firing"})
-        eval_time: 30m
-        exp_samples:
-          - labels: '{tenant_id="big"}'
-            value: 1
-      - expr: count by (tenant_id) (ALERTS{alertname="TenantEnterpriseSLOBurn", alertstate="firing"})
-        eval_time: 30m
-        exp_samples:
-          - labels: '{tenant_id="acme"}'
-            value: 1
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",job="service-order",funnel_stage="order_placed",reason="none"}'
+        values: '0+50x40'
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",job="service-order",funnel_stage="purchase_published",reason="none"}'
+        values: '0+50x40'
+      - series: 'nebula_commerce_funnel_events_total{cluster="c1",environment="dev",job="service-product",funnel_stage="purchase_consumed",reason="none"}'
+        values: '0+50x10 500x30'
+    alert_rule_test:
+      - alertname: SagaStalled
+        eval_time: 15m
+        exp_alerts: []
+      - alertname: SagaStalled
+        eval_time: 35m
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: service-owner
+              cluster: c1
+              environment: dev
+            exp_annotations:
+              summary: "주문 사가 정지: purchase 이벤트가 발행되지만 service-product 처리 0건"
+              description: "purchase 토픽 lag(messaging:kafka_consumer_lag:sum), service-product 파드/컨슈머 에러 스팬(saga_topic:consumer_errors:rate5m) 확인."
+              runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#sagastalled
 
   # ------------------------------------------------------------------
-  # FinOps: 인프라 비용(₩/h) + 역마진 감지
-  #   CPU 2코어×56 + 메모리 4GiB×7 = 140 ₩/h
-  #   매출 60,000 ₩/h, 원가 66,000 ₩/h → 마진 -6,140 ₩/h
+  # 카나리 분석 (nebula-gitops platform/aws/analysis-slo-canary.yaml 과 같은 쿼리)
+  #   service-order: canary 에러 5% vs stable 0.5% → 절대·상대 기준 모두 실패 (롤백)
+  #   service-x    : canary/stable 모두 2% (외부 장애) → 상대 기준은 통과 (카나리 탓이 아님)
+  # ------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'traces_span_metrics_calls_total{cluster="c1",environment="dev",service_name="service-order",deployment_track="canary",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_OK"}'
+        values: '0+95x30'
+      - series: 'traces_span_metrics_calls_total{cluster="c1",environment="dev",service_name="service-order",deployment_track="canary",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_ERROR"}'
+        values: '0+5x30'
+      - series: 'traces_span_metrics_calls_total{cluster="c1",environment="dev",service_name="service-order",deployment_track="stable",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_OK"}'
+        values: '0+995x30'
+      - series: 'traces_span_metrics_calls_total{cluster="c1",environment="dev",service_name="service-order",deployment_track="stable",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_ERROR"}'
+        values: '0+5x30'
+      - series: 'traces_span_metrics_calls_total{cluster="c1",environment="dev",service_name="service-x",deployment_track="canary",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_OK"}'
+        values: '0+98x30'
+      - series: 'traces_span_metrics_calls_total{cluster="c1",environment="dev",service_name="service-x",deployment_track="canary",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_ERROR"}'
+        values: '0+2x30'
+      - series: 'traces_span_metrics_calls_total{cluster="c1",environment="dev",service_name="service-x",deployment_track="stable",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_OK"}'
+        values: '0+980x30'
+      - series: 'traces_span_metrics_calls_total{cluster="c1",environment="dev",service_name="service-x",deployment_track="stable",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_ERROR"}'
+        values: '0+20x30'
+    promql_expr_test:
+      - expr: round((sum(rate(traces_span_metrics_calls_total{service_name="service-order", deployment_track="canary", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[2m])) or vector(0)) / sum(rate(traces_span_metrics_calls_total{service_name="service-order", deployment_track="canary", span_kind="SPAN_KIND_SERVER"}[2m])), 0.001)
+        eval_time: 20m
+        exp_samples:
+          - labels: '{}'
+            value: 0.05
+      - expr: ((sum(rate(traces_span_metrics_calls_total{service_name="service-order", deployment_track="canary", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[2m])) or vector(0)) / sum(rate(traces_span_metrics_calls_total{service_name="service-order", deployment_track="canary", span_kind="SPAN_KIND_SERVER"}[2m]))) > bool 2 * ((sum(rate(traces_span_metrics_calls_total{service_name="service-order", deployment_track="stable", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[2m])) or vector(0)) / sum(rate(traces_span_metrics_calls_total{service_name="service-order", deployment_track="stable", span_kind="SPAN_KIND_SERVER"}[2m]))) + 0.005
+        eval_time: 20m
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: ((sum(rate(traces_span_metrics_calls_total{service_name="service-x", deployment_track="canary", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[2m])) or vector(0)) / sum(rate(traces_span_metrics_calls_total{service_name="service-x", deployment_track="canary", span_kind="SPAN_KIND_SERVER"}[2m]))) > bool 2 * ((sum(rate(traces_span_metrics_calls_total{service_name="service-x", deployment_track="stable", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[2m])) or vector(0)) / sum(rate(traces_span_metrics_calls_total{service_name="service-x", deployment_track="stable", span_kind="SPAN_KIND_SERVER"}[2m]))) + 0.005
+        eval_time: 20m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+
+  # ------------------------------------------------------------------
+  # 인프라 비용(₩/h): CPU 2코어×56 + 메모리 4GiB×7 = 140 ₩/h
   # ------------------------------------------------------------------
   - interval: 1m
     input_series:
@@ -173,38 +201,12 @@ tests:
         values: '4294967296x90'
       - series: 'kube_pod_status_phase{cluster="c1",namespace="shop",pod="p1",phase="Running"}'
         values: '1x90'
-      - series: 'nebula_order_revenue_total{cluster="c1",environment="dev",tenant_id="t1"}'
-        values: '0+1000x90'
-      - series: 'nebula_order_cost_total{cluster="c1",environment="dev",cost_type="cogs"}'
-        values: '0+1100x90'
     promql_expr_test:
       - expr: cluster:infra_cost_krw:rate1h
         eval_time: 70m
         exp_samples:
           - labels: '{__name__="cluster:infra_cost_krw:rate1h",cluster="c1"}'
             value: 140
-      - expr: nebula:margin_krw:increase1h
-        eval_time: 70m
-        exp_samples:
-          - labels: '{__name__="nebula:margin_krw:increase1h",cluster="c1"}'
-            value: -6140
-      - expr: nebula:margin_burn_krw:rate1h
-        eval_time: 70m
-        exp_samples:
-          - labels: '{__name__="nebula:margin_burn_krw:rate1h",cluster="c1"}'
-            value: 6140
-    alert_rule_test:
-      - alertname: NetMarginDeficit
-        eval_time: 85m
-        exp_alerts:
-          - exp_labels:
-              severity: critical
-              team: finance
-              cluster: c1
-            exp_annotations:
-              summary: "역마진 진입: 순마진 -10.23%"
-              description: "쿠폰 중복 적용/배송비/PG 수수료 구성 확인. 프로모션 서킷 브레이커(쿠폰 발급 제한) 발동 검토."
-              runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#netmargindeficit
 
   # ------------------------------------------------------------------
   # 파이프라인: 노드 3대인데 agent 2개만 동작 → TelemetryAgentMissing
@@ -239,23 +241,3 @@ tests:
         eval_time: 20m
         exp_alerts: []
 
-  # ------------------------------------------------------------------
-  # FinOps 견고성: 인프라 비용(KSM) 신호가 없어도 마진은 계산된다
-  # ------------------------------------------------------------------
-  - interval: 1m
-    input_series:
-      - series: 'nebula_order_revenue_total{cluster="c2",environment="dev",tenant_id="t1"}'
-        values: '0+1000x90'
-      - series: 'nebula_order_cost_total{cluster="c2",environment="dev",cost_type="cogs"}'
-        values: '0+600x90'
-    promql_expr_test:
-      - expr: nebula:margin_krw:increase1h
-        eval_time: 70m
-        exp_samples:
-          - labels: '{__name__="nebula:margin_krw:increase1h",cluster="c2"}'
-            value: 24000
-      - expr: nebula:net_margin:ratio1h
-        eval_time: 70m
-        exp_samples:
-          - labels: '{__name__="nebula:net_margin:ratio1h",cluster="c2"}'
-            value: 0.4

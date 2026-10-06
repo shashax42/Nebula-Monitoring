@@ -138,3 +138,22 @@ groups:
             호출 수는 평소와 같고 tenant:db_latency_seconds:p99_5m 만 높으면 해당 고객 데이터셋/쿼리 문제(인덱스·파티셔닝 검토).
             Aurora RowLockTime/BlockedTransactions(CloudWatch)와 함께 확인.
           runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#tenantnoisyneighbor
+
+  # 테넌트 비용 배분 (입력: 05-cost.rules.yaml 의 cluster/namespace 인프라 비용)
+  - name: nebula.tenant.cost
+    interval: 5m
+    rules:
+      # 테넌트 비용 배분 — 공유 풀 모델
+      - record: tenant:infra_cost_krw:rate1h
+        expr: |
+          tenant:server_time_share:ratio1h
+          * on (cluster) group_left ()
+          cluster:infra_cost_krw:rate1h
+      # 테넌트 비용 배분 — 네임스페이스 전용 모델 (namespace 라벨 tenant-id)
+      - record: tenant_namespace:infra_cost_krw:rate1h
+        expr: |
+          sum by (cluster, label_tenant_id) (
+            namespace:infra_cost_krw:rate1h
+            * on (cluster, namespace) group_left (label_tenant_id)
+            max by (cluster, namespace, label_tenant_id) (kube_namespace_labels{label_tenant_id!=""})
+          )

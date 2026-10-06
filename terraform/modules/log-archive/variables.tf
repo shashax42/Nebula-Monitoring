@@ -19,7 +19,7 @@ variable "s3_prefix" {
 }
 
 variable "retention_days" {
-  description = "S3 보관 기간 (기본 7년 = 2,557일)"
+  description = "S3 보관 기간 (기본 7년 = 2,557일, 법정 최소 5년 위의 정책값)"
   type        = number
   default     = 2557
 }

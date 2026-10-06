@@ -22,15 +22,18 @@ done
 helm template otel-collector "$CHART" -n monitoring -f "$CHART/values-prod.yaml" "${REQ[@]}" \
   --set cluster.messaging.kafka.enabled=true --set 'cluster.messaging.kafka.brokers={b-1:9092}' \
   --set cluster.messaging.rabbitmq.enabled=true > /tmp/otel-full.yaml
+# 확장 오버레이(테넌트·결제)를 얹은 렌더링
+helm template otel-collector "$CHART" -n monitoring -f "$CHART/values-prod.yaml" -f "$CHART/values-extension-business.yaml" "${REQ[@]}" \
+  > /tmp/otel-extension.yaml
 
 step "Collector configs validated by otelcol-contrib (${OTEL_IMAGE})"
-for f in /tmp/otel-dev.yaml /tmp/otel-prod.yaml /tmp/otel-full.yaml; do
+for f in /tmp/otel-dev.yaml /tmp/otel-prod.yaml /tmp/otel-full.yaml /tmp/otel-extension.yaml; do
   python3 scripts/validate_collector.py --image "$OTEL_IMAGE" < "$f" || fail=1
 done
 
-step "Prometheus rules: check + unit tests"
+step "Prometheus rules: check + unit tests (core, core + extensions)"
 docker run --rm -v "$ROOT/prometheus:/p:ro" -w /p/tests --entrypoint sh "$PROM_IMAGE" -c \
-  'promtool check rules /p/rules/*.rules.yaml && promtool test rules rules.test.yaml' || fail=1
+  'promtool check rules /p/rules/*.rules.yaml /p/rules/extensions/*.rules.yaml && promtool test rules rules.test.yaml extensions.test.yaml' || fail=1
 
 step "Dashboards are up to date and every PromQL parses"
 python3 grafana/generate_dashboards.py >/dev/null
@@ -41,7 +44,7 @@ TMP_RULES="$(mktemp -d)"; chmod 755 "$TMP_RULES"
 python3 - "$TMP_RULES/dash.yaml" <<'PY'
 import glob, json, sys, yaml
 rules = []
-for f in sorted(glob.glob("grafana/dashboards/*.json")):
+for f in sorted(glob.glob("grafana/dashboards/**/*.json", recursive=True)):
     for p in json.load(open(f))["panels"]:
         for t in p.get("targets", []):
             if "expr" in t:

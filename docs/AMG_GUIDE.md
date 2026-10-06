@@ -62,7 +62,7 @@ Configuration → Data Sources → Prometheus
 
 자동으로 연결됩니다. 사용 가능한 네임스페이스:
 - `AWS/RDS`, `AWS/ElastiCache` (Data Stores 대시보드)
-- `Nebula/Application` — gateway 가 EMF 로 보내는 SLI/결제 지표 (CloudWatch Alarms 대상)
+- `Nebula/Application` — gateway 가 EMF 로 보내는 SLI 지표 (CloudWatch Alarms 대상, 확장 시 결제 지표 추가)
 - `Nebula/Logs` — 로그 메트릭 필터 (ErrorLogs, OOMKilledEvents)
 
 ### 3. X-Ray
@@ -78,7 +78,8 @@ Explore → X-Ray → Service Map
 ### 프로비저닝 (권장)
 
 ```bash
-./scripts/provision-grafana.sh dev
+./scripts/provision-grafana.sh dev                 # 기본 대시보드
+./scripts/provision-grafana.sh dev --extensions    # + 확장(테넌트·결제·마진)
 ```
 
 - 데이터소스 3개를 uid 고정(`amp`, `cloudwatch`, `xray`)으로 만들고 워크스페이스 IAM 역할로 인증한다.
@@ -88,9 +89,9 @@ Explore → X-Ray → Service Map
 |---|---|
 | Nebula / Overview (Q1–Q5) | 클러스터 건강 → 서비스 에러 → 지연 → 리소스 → 시스템 개요 |
 | Nebula / Service SLO & Golden Signals | 30일 가용성 게이지, 남은 버짓, Time to Burn Out, 번레이트, 목표선, 라우트/의존성, 서비스 맵, 에러 로그 |
-| Nebula / Business Flow & Payments | 퍼널 Drop %, 전환율, PG 실패 원인 분리, 논리 오류, 카드사 거절률, Consumer Lag |
-| Nebula / Tenants | tenant_id 별 Golden Signals, 티어 SLA, Noisy Neighbor, 테넌트 비용 효율 |
-| Nebula / FinOps & Margin | Net Margin 게이지, Burn Rate, BEP, 역마진 예측, 비용 구성, 유휴 비용 |
+| Nebula / Order Saga & Messaging | 주문 사가 단계·완료율, 발행 실패, 보상(취소) 누락, 재고 거절률, Kafka lag·토픽별 지연·에러 |
+| Nebula / Infra Cost & Efficiency | 네임스페이스 비용(₩/h), 유휴 비용·비율, 다운사이징 후보 |
+| Nebula / Ext / Funnel & Payments · Tenants · Margin | (확장) 퍼널·PG 실패 원인, 테넌트 Noisy Neighbor·비용, Net Margin |
 | Nebula / Data Stores | Aurora / Redis (CloudWatch) |
 | Nebula / Telemetry Pipeline | 수집량, 정제량, 샘플링, 전송 실패, 카디널리티 |
 
@@ -105,10 +106,10 @@ Explore → X-Ray → Service Map
 service:requests:rate5m
 
 # 예시: 에러율
-service:error_ratio:rate5m{service_name="payment-service"}
+service:error_ratio:rate5m{service_name="service-order"}
 
 # 예시: P95 레이턴시 (원천 히스토그램에서 직접)
-histogram_quantile(0.95, sum by (le) (rate(traces_span_metrics_duration_seconds_bucket{service_name="payment-service", span_kind="SPAN_KIND_SERVER"}[5m])))
+histogram_quantile(0.95, sum by (le) (rate(traces_span_metrics_duration_seconds_bucket{service_name="service-order", span_kind="SPAN_KIND_SERVER"}[5m])))
 ```
 
 ## 알림 설정

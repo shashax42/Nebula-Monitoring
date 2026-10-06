@@ -14,7 +14,7 @@ terraform {
 #   Hot  : CloudWatch Logs (log-analytics 모듈 retention, 예: 감사 90일)
 #   Warm : S3 Standard-IA (30일 후)
 #   Cold : S3 Glacier Instant Retrieval (90일 후) → Deep Archive (365일 후)
-#   삭제 : 7년(2,557일) 후 만료 (전자금융/전자상거래 거래기록 보존 기준)
+#   삭제 : 7년(2,557일) 후 만료 — 정책값. 법정 최소는 5년(전자금융거래법 §22·시행령 §12, 전자상거래법 시행령 §6)
 #
 # Firehose 가 CloudWatch Logs 구독 데이터(gzip)를 풀고 로그 메시지만 추출해 다시 gzip 으로 저장한다.
 # 저장 경로: s3://<bucket>/<prefix>/<log-class>/year=YYYY/month=MM/day=DD/  (Athena 파티션)

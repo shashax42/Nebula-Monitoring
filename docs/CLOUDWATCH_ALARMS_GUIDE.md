@@ -3,10 +3,10 @@
 ## 알람 구성
 
 CloudWatch Alarms 는 **Alertmanager 대체 계층**으로, "고객 영향이 확정된" SLA/비즈니스 경보를 담당한다.
-조기 경보(번레이트, 테넌트, 이상탐지, 쿠버네티스)는 AMP 알림 규칙 → AMP Alertmanager → **같은 SNS 토픽**으로 온다.
+조기 경보(번레이트, 주문 사가, 이상탐지, 쿠버네티스)는 AMP 알림 규칙 → AMP Alertmanager → **같은 SNS 토픽**으로 온다.
 
 데이터 출처: gateway 가 트레이스에서 직접 센 SLI 를 EMF 로 `Nebula/Application` 에 보낸다
-(`Requests`, `Errors`, `SlowRequests` — 차원 `Environment`[, `Service`] / `PaymentRequests`, `PaymentLogicalErrors`).
+(`Requests`, `Errors`, `SlowRequests` — 차원 `Environment`[, `Service`]). 확장 오버레이를 켜면 `PaymentRequests`, `PaymentLogicalErrors` 가 추가된다.
 
 ### SLA / Golden Signals
 
@@ -16,9 +16,11 @@ CloudWatch Alarms 는 **Alertmanager 대체 계층**으로, "고객 영향이 �
 | `<env>-sla-availability-<service>` | 핵심 서비스(`slo_services`)별 동일 조건 | critical |
 | `<env>-error-rate` | 에러율 > 5% | warning |
 | `<env>-latency-slo` | 1s 초과 요청 > 5% (= P95 > 1s) | warning |
-| `<env>-service-degradation` (Composite) | SLA 위반 OR (에러율 AND 지연) OR PG 타임아웃 | critical |
+| `<env>-service-degradation` (Composite) | SLA 위반 OR (에러율 AND 지연) [OR PG 타임아웃 — 확장] | critical |
 
-### 결제 (비즈니스 완결성)
+### 결제 (확장 — `enable_business_extensions = true` 일 때만 생성)
+
+결제 서비스와 collector 오버레이(`values-extension-business.yaml`)가 있어야 데이터가 생긴다. 기본 배포에서는 만들지 않는다.
 
 | 알람 | 조건 | 토픽 |
 |------|------|------|
@@ -109,8 +111,8 @@ availability_threshold = 99.95 # 99.95%
 
 | 토픽 | 대상 | 기대 대응 |
 |---|---|---|
-| `<env>-alerts-critical` | SLA 위반, PG 타임아웃, 결제 논리 오류, Composite, 로그 유입 중단 + AMP critical 규칙 | 즉시 |
-| `<env>-alerts-warning` | 에러율, 지연 SLO, 결제 실패율, Aurora/Redis + AMP warning/info 규칙 | 업무 시간 내 (info 는 하루 1회 묶음) |
+| `<env>-alerts-critical` | SLA 위반, Composite, 로그 유입 중단 + AMP critical 규칙(사가 발행 실패·정지·보상 누락 등) [확장: PG 타임아웃, 결제 논리 오류] | 즉시 |
+| `<env>-alerts-warning` | 에러율, 지연 SLO, Aurora/Redis + AMP warning/info 규칙 [확장: 결제 실패율] | 업무 시간 내 (info 는 하루 1회 묶음) |
 
 ## 알람 발생 시 대응
 

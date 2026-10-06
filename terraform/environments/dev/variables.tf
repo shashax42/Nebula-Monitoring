@@ -50,25 +50,25 @@ variable "alarm_email_endpoints" {
 variable "slo_services" {
   description = "서비스별 가용성 SLA CloudWatch 알람을 만들 핵심 서비스(OTel service.name)"
   type        = list(string)
-  default     = ["api-gateway", "payment-service", "auth-service"]
+  default     = ["core-gateway", "service-order", "service-product", "service-account"]
 }
 
 # ---------------- 데이터 스토어 (terraform_new 인프라) ----------------
 variable "aurora_cluster_identifiers" {
-  description = "감시할 Aurora DBClusterIdentifier 목록 (terraform_new 출력값)"
+  description = "감시할 Aurora DBClusterIdentifier 목록. 비우면 Nebula-Platform output(remote state)을 쓴다"
   type        = list(string)
   default     = []
 }
 
 variable "redis_replication_group_ids" {
-  description = "감시할 ElastiCache Redis replication group ID 목록 (노드는 자동 조회)"
+  description = "감시할 ElastiCache Redis replication group ID 목록 (노드는 자동 조회). 비우면 Nebula-Platform output 을 쓴다"
   type        = list(string)
   default     = []
 }
 
 # ---------------- 로그 보존 / 아카이브 ----------------
 variable "audit_log_hot_retention_days" {
-  description = "감사/결제 로그의 CloudWatch(Hot) 보존 기간"
+  description = "감사 로그의 CloudWatch(Hot) 보존 기간"
   type        = number
   default     = 90
 }
@@ -86,7 +86,7 @@ variable "archive_application_logs" {
 }
 
 variable "archive_retention_days" {
-  description = "S3 아카이브 보존 기간 (기본 7년)"
+  description = "S3 아카이브 보존 기간. 법정 최소 5년(전자금융거래법 §22·시행령 §12, 전자상거래법 시행령 §6 대금결제 기록) 위에 분쟁 대응 여유를 둔 7년 정책값"
   type        = number
   default     = 2557
 }
@@ -96,3 +96,11 @@ variable "archive_object_lock" {
   type        = bool
   default     = false
 }
+
+# ---------------- 확장 ----------------
+variable "enable_business_extensions" {
+  description = "테넌트·결제·마진 확장 규칙(prometheus/rules/extensions)과 결제 알람 생성. 해당 데이터를 내보내는 서비스가 있을 때만 켠다"
+  type        = bool
+  default     = false
+}
+
