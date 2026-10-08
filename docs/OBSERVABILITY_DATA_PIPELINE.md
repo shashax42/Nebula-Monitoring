@@ -30,7 +30,7 @@
 | Anomaly Alert / Idle Resource Score | `06-anomaly` |
 | Cold Data (S3), TTL Data | `terraform/modules/log-archive` (법정 최소 5년, 정책값 7년), 로그 클래스별 retention |
 | 역마진: Revenue vs Total OpEx, BEP, Net Margin 게이지(5%/0%), Burn Rate ₩/hr, D+? 예측 | `[확장]` `extensions/margin` + `Ext / Margin` 대시보드 (매출·원가 이벤트 필요) |
-| Reliability & GitOps: 배포 직후 이상 → 메트릭 기반 Auto-Rollback | service-order Argo Rollouts canary + nebula-gitops `platform/aws/analysis-slo-canary.yaml` (AMP span metrics, `deployment_track`) |
+| Reliability & GitOps: 배포 직후 이상 → 메트릭 기반 Auto-Rollback | service-order Argo Rollouts canary + nebula-gitops `platform/aws/base/analysis-slo-canary.yaml` (AMP span metrics, `deployment_track`) |
 | 위젯: Gauge with Thresholds / Time Series with Goal Line / Time to Burn Out / Actionable Links | `Nebula / Service SLO` 대시보드 상단 |
 | Operability: 계정 분리 (prod-us ↔ prod-eu, customer-A) | `terraform/modules/cross-account-ingest`, `routing/logs` |
 

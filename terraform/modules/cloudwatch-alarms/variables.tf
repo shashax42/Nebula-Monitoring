@@ -176,3 +176,34 @@ variable "redis_evictions_threshold" {
   type        = number
   default     = 100
 }
+
+# ---------------- RDS (dev / staging: 단일 인스턴스 MySQL) ----------------
+variable "rds_instance_identifiers" {
+  description = "감시할 RDS DBInstanceIdentifier 목록 (Nebula-Platform dev/staging)"
+  type        = list(string)
+  default     = []
+}
+
+variable "rds_cpu_threshold" {
+  type    = number
+  default = 80
+}
+
+variable "rds_free_storage_bytes" {
+  description = "남은 스토리지 하한 (bytes)"
+  type        = number
+  default     = 2147483648 # 2 GiB
+}
+
+# ---------------- SQS (staging: 비동기 경로) ----------------
+variable "sqs_queue_names" {
+  description = "감시할 SQS 큐 이름 목록. 이름이 -dlq 로 끝나면 DLQ 로 본다"
+  type        = list(string)
+  default     = []
+}
+
+variable "sqs_oldest_message_age_seconds" {
+  description = "가장 오래된 메시지 나이 상한 (초). 넘으면 소비가 생산을 못 따라가는 것"
+  type        = number
+  default     = 300
+}

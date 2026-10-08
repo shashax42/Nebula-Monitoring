@@ -66,6 +66,18 @@ variable "redis_replication_group_ids" {
   default     = []
 }
 
+variable "rds_instance_identifiers" {
+  description = "알람 대상 RDS 인스턴스 ID. 비우면 Nebula-Platform output(rds_instance_identifiers)을 쓴다"
+  type        = list(string)
+  default     = []
+}
+
+variable "sqs_queue_names" {
+  description = "알람 대상 SQS 큐. 비우면 Nebula-Platform output(sqs_queue_names)을 쓴다"
+  type        = list(string)
+  default     = []
+}
+
 # ---------------- 로그 보존 / 아카이브 ----------------
 variable "audit_log_hot_retention_days" {
   description = "감사 로그의 CloudWatch(Hot) 보존 기간"

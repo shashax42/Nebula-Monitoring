@@ -7,7 +7,11 @@ set -euo pipefail
 ENVIRONMENT="${1:-dev}"
 NAMESPACE="monitoring"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TF_DIR="${ROOT_DIR}/terraform/environments/${ENVIRONMENT}"
+# Terraform 루트는 하나, 환경은 workspace (dev = default)
+TF_DIR="${ROOT_DIR}/terraform/environments/dev"
+if [[ "$ENVIRONMENT" != "dev" ]]; then
+  export TF_WORKSPACE="$ENVIRONMENT"
+fi
 REGION="${AWS_REGION:-ap-northeast-2}"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
