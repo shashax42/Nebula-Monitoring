@@ -422,8 +422,17 @@ def business():
     L.add(timeseries("Consumer 에러 스팬 (건/s)", [
         prom(f'saga_topic:consumer_errors:rate5m{{{C}}}', "{{service_name}} ← {{messaging_destination_name}}")], unit="suffix: 건/s",
         desc="리스너 예외 (역직렬화 실패, 상품 없음 등). 재시도되면 lag 과 함께 증가"), 12, 8)
+    L.row("배치 — batch-order CronJob (Push Gateway 대신 종료 시 OTLP push)")
+    L.add(table("배치별 마지막 성공 이후 경과", f'sort_desc(batch_job:since_last_success:seconds{{{C}}})', unit="s",
+                rename={"Value": "경과", "job_name": "잡"}, steps=thresholds((GREEN, None), (YELLOW, 600), (RED, 1800)),
+                links=[link("Runbook: 배치 지연", f"{RUNBOOK}#batchjobstale")]), 8, 8)
+    L.add(timeseries("처리 주문 수 (실행마다)", [prom(f'max by (job_name) (nebula_batch_order_rows{{{C}}})', "{{job_name}}")],
+                     unit="short", desc="cancel 잡이 0 보다 크면 1주 넘게 PENDING 이던 주문이 있었다는 뜻 (끝나지 않은 사가)",
+                     links=[link("Runbook: 오래된 주문 자동 취소", f"{RUNBOOK}#staleordersautocanceled")]), 8, 8)
+    L.add(timeseries("실행 시간", [prom(f'max by (job_name, status) (nebula_batch_job_duration_seconds{{{C}}})', "{{job_name}} {{status}}")],
+                     unit="s"), 8, 8)
     return dashboard("nebula-business", "Nebula / Order Saga & Messaging", L, BASE_VARS,
-                     "주문 사가 단계별 흐름·완료율, 발행 실패, 보상(취소) 누락, 재고 거절, Kafka 구간 지연·적체",
+                     "주문 사가 단계별 흐름·완료율, 발행 실패, 보상(취소) 누락, 재고 거절, Kafka 구간 지연·적체, 배치 실행 결과",
                      links=COMMON_LINKS, tags=["business", "saga"])
 
 
