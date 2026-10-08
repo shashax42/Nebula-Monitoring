@@ -7,6 +7,7 @@ rule_files:
   - ../rules/05-cost.rules.yaml
   - ../rules/06-anomaly.rules.yaml
   - ../rules/07-pipeline.rules.yaml
+  - ../rules/08-batch.rules.yaml
   - ../rules/extensions/tenant.rules.yaml
   - ../rules/extensions/commerce-payment.rules.yaml
   - ../rules/extensions/margin.rules.yaml

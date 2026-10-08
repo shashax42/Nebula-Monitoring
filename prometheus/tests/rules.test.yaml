@@ -8,6 +8,7 @@ rule_files:
   - ../rules/05-cost.rules.yaml
   - ../rules/06-anomaly.rules.yaml
   - ../rules/07-pipeline.rules.yaml
+  - ../rules/08-batch.rules.yaml
 
 evaluation_interval: 1m
 
@@ -207,6 +208,39 @@ tests:
         exp_samples:
           - labels: '{__name__="cluster:infra_cost_krw:rate1h",cluster="c1"}'
             value: 140
+
+  # ------------------------------------------------------------------
+  # 배치: 실행 때만 샘플이 생기는 게이지 (5분 간격, 사이는 빈 칸)
+  #   cancel 잡: 성공 계속, 마지막 실행에서 오래된 PENDING 주문 3건 취소 → StaleOrdersAutoCanceled
+  #   delete 잡: 20분까지 성공, 이후 실패만 → BatchJobFailing, 50분에 성공 기록이 30분을 넘김 → BatchJobStale
+  # ------------------------------------------------------------------
+  - interval: 5m
+    input_series:
+      - series: 'nebula_batch_job_last_run_seconds{cluster="c1",environment="dev",job="batch-order",cronjob="batch-order-every-5-minutes",job_name="cancelOrderWhereStateIsPendingJob",status="completed"}'
+        values: '0+300x12'
+      - series: 'nebula_batch_order_rows{cluster="c1",environment="dev",job="batch-order",cronjob="batch-order-every-5-minutes",job_name="cancelOrderWhereStateIsPendingJob"}'
+        values: '0x10 3 3'
+      - series: 'nebula_batch_job_last_run_seconds{cluster="c1",environment="dev",job="batch-order",cronjob="batch-order-every-2-minutes",job_name="deleteOrderWhereStateIsCanceledJob",status="completed"}'
+        values: '0+300x4'
+      - series: 'nebula_batch_job_last_run_seconds{cluster="c1",environment="dev",job="batch-order",cronjob="batch-order-every-2-minutes",job_name="deleteOrderWhereStateIsCanceledJob",status="failed"}'
+        values: '_x5 1500+300x7'
+    promql_expr_test:
+      - expr: batch_job:since_last_success:seconds
+        eval_time: 55m
+        exp_samples:
+          - labels: '{__name__="batch_job:since_last_success:seconds",cluster="c1",environment="dev",job_name="cancelOrderWhereStateIsPendingJob"}'
+            value: 0
+          - labels: '{__name__="batch_job:since_last_success:seconds",cluster="c1",environment="dev",job_name="deleteOrderWhereStateIsCanceledJob"}'
+            value: 2100
+      - expr: count by (alertname, job_name) (ALERTS{alertstate="firing", alertname=~"Batch.*|StaleOrders.*"})
+        eval_time: 60m
+        exp_samples:
+          - labels: '{alertname="BatchJobFailing",job_name="deleteOrderWhereStateIsCanceledJob"}'
+            value: 1
+          - labels: '{alertname="BatchJobStale",job_name="deleteOrderWhereStateIsCanceledJob"}'
+            value: 1
+          - labels: '{alertname="StaleOrdersAutoCanceled",job_name="cancelOrderWhereStateIsPendingJob"}'
+            value: 1
 
   # ------------------------------------------------------------------
   # 파이프라인: 노드 3대인데 agent 2개만 동작 → TelemetryAgentMissing

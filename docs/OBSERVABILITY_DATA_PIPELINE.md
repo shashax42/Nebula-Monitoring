@@ -104,6 +104,7 @@
 | K8s 이벤트 | events.k8s.io watch | cluster `k8sobjects` | OOMKilled, FailedScheduling, BackOff, Evicted | CW Logs `events` (14일) |
 | 트레이스 | Micrometer Tracing (OTel bridge) | agent → gateway | HTTP 서버/클라이언트, Kafka producer/consumer, DB 스팬 | X-Ray (샘플링 후) |
 | 앱 메트릭 | micrometer-registry-otlp / `prometheus.io/scrape` | agent | JVM·HTTP, **사가 단계 카운터** (`[확장]` 결제·매출·원가) | AMP |
+| 배치 결과 | batch-order CronJob, 종료 시 OTLP push (Push Gateway 대체) | agent → gateway (Job 파드는 `pod` 대신 `cronjob` 라벨) | 마지막 실행 시각·상태, 실행 시간, 처리 주문 수 | AMP |
 | 노드/파드 자원 | kubelet `/metrics/resource`, cAdvisor | agent (노드 로컬) | CPU/메모리/네트워크/스로틀링/OOM | AMP |
 | PVC | kubelet `/metrics` | agent | 볼륨 사용량 | AMP |
 | 클러스터 상태 | kube-state-metrics | cluster | 노드/파드 phase, requests/limits, 재시작, 네임스페이스 테넌트 라벨 | AMP |
@@ -203,6 +204,7 @@ PG 사마다 다른 원본 코드를 9개 카테고리로 분류한다 (표: TEL
 | `01-kubernetes` | `node:cpu_utilization:ratio`, `namespace:cpu_usage_vs_limit:ratio`, `pod:cpu_usage_vs_request:ratio` (Saturation, Q4) |
 | `02-service-slo` | `service:requests/errors/error_ratio:rate5m`, `service:latency_seconds:p50/p95/p99_5m`, 라우트·의존성 지표, `service:sli_error:ratio_rate{5m..3d,30d}`, `service:sli_latency_bad:ratio_rate*`, `service:error_budget_remaining:ratio`, **`service:error_budget_exhaustion:hours`(Time to Burn Out)** |
 | `04-business` | **주문 사가**: `saga:publish_failure:ratio_rate5m`, `saga:stock_rejection:ratio_rate15m`, `saga:completion:ratio1h`, `saga:consume_gap/compensation_gap:increase15m`, `saga_topic:consumer/producer_latency_seconds:p95_5m`, `messaging:kafka_consumer_lag:sum` |
+| `08-batch` | `batch_job:since_last_success:seconds`, `batch_job:last_failure_timestamp:seconds`, `batch_order:rows:max1h` |
 | `05-cost` | 단가 상수 → `namespace/cluster:infra_cost_krw:rate1h`, `namespace:idle_cost_krw:rate1h` |
 | `06-anomaly` | z-score(트래픽·에러율·CPU·에러 로그), `namespace:idle_resource_score:ratio1d` |
 | `[확장]` `extensions/tenant` | `tenant:requests/error_ratio/latency`, `tenant:db_time_share:ratio5m`, `tenant:error_budget_burn:rate1h`(티어별 목표), `tenant:infra_cost_krw:rate1h` |

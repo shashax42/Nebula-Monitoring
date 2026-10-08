@@ -60,6 +60,21 @@ service-order 가 주문을 커밋한 뒤 Kafka `purchase` 발행에 실패한 �
 Kafka consumer lag / RabbitMQ ready 메시지가 1000 이상이고 증가 중. `AsyncLagWhileAPIHealthy` 는 API 에러율이 정상(1% 미만)인데 lag 이 계속 쌓이는 경우(critical) — 재고 차감·보상 취소 지연.
 - 조치: 컨슈머 스케일아웃, 처리 실패/재시도 루프(데드레터) 확인, 다운스트림(DB) 포화 여부.
 
+## BatchJobStale
+batch-order 잡의 마지막 성공이 30분을 넘음 (스케줄은 2분·5분 간격).
+- 먼저: `kubectl get cronjob,job -n backend`, 최근 Job 파드 상태(ImagePullBackOff, Pending), CronJob `suspend` 여부.
+- 지표가 아예 없으면: Job 파드가 OTLP 를 보내기 전에 죽었는지(DB 연결 실패 등 시작 단계 오류) 파드 로그 확인. 이때는 KubeJobFailed 가 같이 울린다.
+
+## BatchJobFailing
+마지막 실행이 실패로 끝남 (잡 안의 SQL 오류 등). 종료 코드가 0 이 아니어서 CronJob 이 재시도한다.
+- 먼저: 실패한 Job 파드 로그의 `배치 수행 실패`와 stack_trace, DB 상태.
+- 조치: 원인 복구 후 다음 스케줄에서 성공하면 자동 해소. 계속 실패하면 CronJob 을 일시 중지하고 수동 실행으로 확인.
+
+## StaleOrdersAutoCanceled
+배치가 1주 넘게 PENDING 이던 주문을 취소함. 정상이면 0 건이어야 한다. 사가가 끝까지 가지 못한 주문이 있었다는 뜻.
+- 먼저: 그 주문들이 생성된 시점의 SagaPublishFailures / SagaCompensationGap 기록, purchase 토픽 lag.
+- 조치: 원인이 된 단계를 고치고, 자동 취소된 주문에 대한 고객 안내·재고 정합성 확인.
+
 ## TrafficAnomaly
 요청률 z-score |z| > 3 (최근 1일 대비). info — 급증은 외부 유입/봇, 급감은 상위 장애/라우팅 문제 가능성.
 

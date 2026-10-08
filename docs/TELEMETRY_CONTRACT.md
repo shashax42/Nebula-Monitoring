@@ -65,6 +65,22 @@ Micrometer 는 Observation 키를 그대로 스팬 속성으로 쓴다. gateway 
 - 규칙: `prometheus/rules/04-business.rules.yaml` (발행 실패율, 사가 정지, 보상 누락, 재고 거절률, 완료율).
 - 메시지 브로커 lag 은 앱이 아니라 collector(cluster) 가 수집한다 (`cluster.messaging.kafka.enabled`, Strimzi `market-message`).
 
+### 4.1 배치 (batch-order CronJob)
+
+짧게 살다 끝나는 프로세스라 스크레이프로는 놓친다. 기존 구조의 Push Gateway 대신, 종료할 때 OTLP 로 마지막 값을 push 한다
+(`SpringApplication.exit` 로 컨텍스트를 정상 종료해야 OTLP 레지스트리가 마지막 전송을 한다).
+
+| 메트릭 | 타입 | 속성 | 의미 |
+|---|---|---|---|
+| `nebula.batch.job.last.run` | Gauge (epoch s) | `job.name`, `status`=completed\|failed | 마지막으로 끝난 시각 |
+| `nebula.batch.job.duration` | Gauge (s) | `job.name`, `status` | 실행 시간 |
+| `nebula.batch.order.rows` | Gauge | `job.name` | 마지막 성공 실행이 취소·삭제한 주문 수 (Step write count 합) |
+
+- 매 실행이 새 프로세스라 카운터는 0 에서 다시 시작해 증가량을 계산할 수 없다. 그래서 게이지로 "마지막 값"을 보낸다.
+- collector 는 Job 파드(`k8s.job.name` 있음)에 `pod` 라벨을 붙이지 않고 `cronjob` 라벨을 붙인다. 실행마다 바뀌는 파드 이름이 새 시리즈를 만들지 않게 하기 위해서다.
+- 실패한 실행은 종료 코드가 0 이 아니다 → CronJob 실패 기록, kube-state-metrics `kube_job_status_failed` 와 함께 본다.
+- 규칙: `prometheus/rules/08-batch.rules.yaml` (BatchJobStale, BatchJobFailing, StaleOrdersAutoCanceled).
+
 ## 5. 로그 형식 (stdout JSON 한 줄, Spring logstash)
 
 ```json
