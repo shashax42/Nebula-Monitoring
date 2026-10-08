@@ -1,0 +1,62 @@
+# 배치(CronJob) 실행 결과 — batch-order
+#   기존 구조에서 Push Gateway 가 맡던 "짧게 사는 작업의 마지막 값"을 OTLP 로 받는다.
+#   앱이 종료 직전에 게이지를 push 한다 (nebula-services batch-order BatchMetrics):
+#     nebula_batch_job_last_run_seconds{job_name, status=completed|failed, cronjob}   마지막 종료 시각 (epoch)
+#     nebula_batch_job_duration_seconds{job_name, status, cronjob}                     실행 시간
+#     nebula_batch_order_rows{job_name, cronjob}                                       마지막 성공 실행이 처리한 주문 수
+#   샘플은 실행 때만 생기므로(2~5분 간격) 항상 *_over_time 으로 창 안의 마지막 값을 본다.
+#   collector 는 Job 파드에 pod 라벨을 붙이지 않아 실행이 바뀌어도 같은 시리즈로 이어진다.
+#   프로세스 실패(종료 코드 ≠ 0)는 kube-state-metrics 의 KubeJobFailed 가 따로 잡는다.
+groups:
+  - name: nebula.batch
+    interval: 1m
+    rules:
+      - record: batch_job:last_success_timestamp:seconds
+        expr: max by (cluster, environment, job_name) (max_over_time(nebula_batch_job_last_run_seconds{status="completed"}[1d]))
+      - record: batch_job:last_failure_timestamp:seconds
+        expr: max by (cluster, environment, job_name) (max_over_time(nebula_batch_job_last_run_seconds{status="failed"}[1d]))
+      - record: batch_job:since_last_success:seconds
+        expr: time() - batch_job:last_success_timestamp:seconds
+      - record: batch_job:duration_seconds:max1h
+        expr: max by (cluster, environment, job_name) (max_over_time(nebula_batch_job_duration_seconds[1h]))
+      - record: batch_order:rows:max1h
+        expr: max by (cluster, environment, job_name) (max_over_time(nebula_batch_order_rows[1h]))
+
+  - name: nebula.batch.alerts
+    rules:
+      # 성공 기록이 오래됨: 스케줄이 멈췄거나(CronJob suspend, 이미지 pull 실패) 계속 실패 중
+      - alert: BatchJobStale
+        expr: batch_job:since_last_success:seconds > 1800
+        for: 5m
+        labels:
+          severity: warning
+          team: service-owner
+        annotations:
+          summary: "배치 {{ $labels.job_name }} 마지막 성공이 {{ $value | humanizeDuration }} 전"
+          description: "스케줄은 2~5분 간격. CronJob 상태(kubectl get cronjob -n backend), 최근 Job 파드 로그 확인."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#batchjobstale
+
+      # 마지막 실행이 실패로 끝남 (잡 안의 SQL 오류 등. 성공 기록이 하루 동안 없으면 실패만으로도 발화)
+      - alert: BatchJobFailing
+        expr: |
+          batch_job:last_failure_timestamp:seconds > on (cluster, environment, job_name) batch_job:last_success_timestamp:seconds
+          or
+          (batch_job:last_failure_timestamp:seconds unless on (cluster, environment, job_name) batch_job:last_success_timestamp:seconds)
+        for: 10m
+        labels:
+          severity: warning
+          team: service-owner
+        annotations:
+          summary: "배치 {{ $labels.job_name }} 마지막 실행 실패"
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#batchjobfailing
+
+      # 1주 넘게 PENDING 이던 주문을 배치가 취소함 = 끝나지 않은 사가가 있었다는 뜻
+      - alert: StaleOrdersAutoCanceled
+        expr: batch_order:rows:max1h{job_name="cancelOrderWhereStateIsPendingJob"} > 0
+        labels:
+          severity: warning
+          team: service-owner
+        annotations:
+          summary: "1주 넘게 PENDING 이던 주문 {{ $value | humanize }}건을 배치가 자동 취소"
+          description: "사가가 끝까지 가지 못한 주문입니다. 같은 기간의 SagaPublishFailures / SagaCompensationGap 기록과 대조하세요."
+          runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#staleordersautocanceled

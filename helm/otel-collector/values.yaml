@@ -790,7 +790,10 @@ gateway:
             statements:
               # OTLP 앱 메트릭에 namespace/pod 라벨 부여 (pod 간 시리즈 충돌 방지)
               - set(attributes["namespace"], resource.attributes["k8s.namespace.name"]) where attributes["namespace"] == nil and resource.attributes["k8s.namespace.name"] != nil
-              - set(attributes["pod"], resource.attributes["k8s.pod.name"]) where attributes["pod"] == nil and resource.attributes["k8s.pod.name"] != nil
+              # 단, Job/CronJob 파드는 실행마다 이름이 바뀌어 pod 라벨을 붙이면 실행마다 새 시리즈가 생긴다.
+              # 대신 cronjob 이름을 붙여 같은 배치의 값이 한 시리즈로 이어지게 한다 (Push Gateway 의 job grouping 역할)
+              - set(attributes["pod"], resource.attributes["k8s.pod.name"]) where attributes["pod"] == nil and resource.attributes["k8s.pod.name"] != nil and resource.attributes["k8s.job.name"] == nil
+              - set(attributes["cronjob"], resource.attributes["k8s.cronjob.name"]) where attributes["cronjob"] == nil and resource.attributes["k8s.cronjob.name"] != nil
               # 메시지 브로커 리소스 속성 → 라벨 (큐/컨슈머 그룹 단위 Lag 집계)
               - set(attributes["queue"], resource.attributes["rabbitmq.queue.name"]) where resource.attributes["rabbitmq.queue.name"] != nil
               - set(attributes["vhost"], resource.attributes["rabbitmq.vhost.name"]) where resource.attributes["rabbitmq.vhost.name"] != nil
