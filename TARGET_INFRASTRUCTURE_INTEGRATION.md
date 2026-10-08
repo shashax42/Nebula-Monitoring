@@ -1,3 +1,6 @@
+> **참고**: 이 문서는 Nebula-Platform 리팩토링 전(`terraform_new`) 연결 과정을 기록한 것이다.
+> 현재 절차(환경별 workspace, `platform/aws/envs/<env>`)는 [README.md](README.md) "배포 (GitOps)" 를 따른다.
+
 # terraform_new 인프라 모니터링 통합 가이드
 
 이 문서는 `terraform_new`로 구축된 Nebula Platform 인프라(EKS, Aurora, Redis)를 기존 `Nebula-Monitoring` 스택(OTEL + AMP/AMG/CloudWatch/X-Ray)에 연결하는 방법을 설명합니다.

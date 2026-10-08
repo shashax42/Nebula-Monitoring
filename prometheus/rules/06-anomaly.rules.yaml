@@ -65,7 +65,7 @@ groups:
           team: service-owner
         annotations:
           summary: "{{ $labels.service_name }} 에러율 이상 증가 (z={{ $value | humanize }})"
-          description: "배포 직후라면 롤백 판단 근거. service-order 는 Argo Rollouts 분석(nebula-gitops platform/aws/analysis-slo-canary.yaml)이 같은 신호로 자동 판정."
+          description: "배포 직후라면 롤백 판단 근거. service-order 는 Argo Rollouts 분석(nebula-gitops platform/aws/base/analysis-slo-canary.yaml)이 같은 신호로 자동 판정."
           runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#errorratioanomaly
 
       - alert: ErrorLogSpike

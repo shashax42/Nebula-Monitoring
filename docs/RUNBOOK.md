@@ -64,7 +64,7 @@ Kafka consumer lag / RabbitMQ ready 메시지가 1000 이상이고 증가 중. `
 요청률 z-score |z| > 3 (최근 1일 대비). info — 급증은 외부 유입/봇, 급감은 상위 장애/라우팅 문제 가능성.
 
 ## ErrorRatioAnomaly
-에러율 z-score > 3 이고 1% 초과. 배포 직후라면 롤백 판단 근거 (nebula-gitops `platform/aws/analysis-slo-canary.yaml` 의 canary 판정과 같은 신호 (`CanaryRollback`)).
+에러율 z-score > 3 이고 1% 초과. 배포 직후라면 롤백 판단 근거 (nebula-gitops `platform/aws/base/analysis-slo-canary.yaml` 의 canary 판정과 같은 신호 (`CanaryRollback`)).
 
 ## CanaryRollback
 알림이 아니라 Argo Rollouts 의 자동 판단. service-order 롤아웃이 `nebula-slo-canary` 분석(AMP, canary vs stable)에서 실패하면 canary 를 내리고 stable 로 되돌린다.

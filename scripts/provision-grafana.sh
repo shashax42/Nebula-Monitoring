@@ -15,7 +15,11 @@ set -euo pipefail
 ENVIRONMENT="${1:-dev}"
 WITH_EXTENSIONS="${2:-}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TF_DIR="${ROOT_DIR}/terraform/environments/${ENVIRONMENT}"
+# Terraform 루트는 하나, 환경은 workspace (dev = default)
+TF_DIR="${ROOT_DIR}/terraform/environments/dev"
+if [[ "$ENVIRONMENT" != "dev" ]]; then
+  export TF_WORKSPACE="$ENVIRONMENT"
+fi
 REGION="${AWS_REGION:-ap-northeast-2}"
 SA_NAME="nebula-provisioner"
 
