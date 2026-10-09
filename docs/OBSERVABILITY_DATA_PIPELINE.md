@@ -206,7 +206,7 @@ PG 사마다 다른 원본 코드를 9개 카테고리로 분류한다 (표: TEL
 | `04-business` | **주문 사가**: `saga:publish_failure:ratio_rate5m`, `saga:stock_rejection:ratio_rate15m`, `saga:completion:ratio1h`, `saga:consume_gap/compensation_gap:increase15m`, `saga_topic:consumer/producer_latency_seconds:p95_5m`, `messaging:kafka_consumer_lag:sum` |
 | `08-batch` | `batch_job:since_last_success:seconds`, `batch_job:last_failure_timestamp:seconds`, `batch_order:rows:max1h` |
 | `05-cost` | 단가 상수 → `namespace/cluster:infra_cost_krw:rate1h`, `namespace:idle_cost_krw:rate1h` |
-| `06-anomaly` | z-score(트래픽·에러율·CPU·에러 로그), `namespace:idle_resource_score:ratio1d` |
+| `06-anomaly` | 지난주 같은 시간 대비 비율(트래픽·에러율·에러 로그), 7일 p95 기준 `namespace:idle_resource_score:ratio7d` |
 | `[확장]` `extensions/tenant` | `tenant:requests/error_ratio/latency`, `tenant:db_time_share:ratio5m`, `tenant:error_budget_burn:rate1h`(티어별 목표), `tenant:infra_cost_krw:rate1h` |
 | `[확장]` `extensions/commerce-payment` | `funnel:stage_conversion:ratio1h{step}`, `payment_pg:system_failure_ratio:rate5m`, `payment_method:decline_ratio:rate15m`, `payment:logical_error_ratio:rate5m` |
 | `[확장]` `extensions/margin` | `nebula:revenue/opex/margin_krw:increase1h`, `nebula:net_margin:ratio1h`, `nebula:margin_burn_krw:rate1h`, `nebula:bep_coverage:ratio1h`, `tenant:cost_efficiency:ratio1h` |
@@ -338,5 +338,5 @@ CI: `.github/workflows/validate.yml` 이 PR 마다 위 검사를 실행한다.
 - **유령 셀러/이탈 예측, 외부 요인(커뮤니티 유입) 결합 예측**: 현재는 규칙 기반 신호(Queue Lag × Error Spike, 거절률 z-score)까지. 예측 모델은 S3 아카이브 + Athena/SageMaker 로 학습 후 점수를 메트릭으로 되돌리는 구조가 필요하다.
 - **봇 Think Time 분석**: 세션 단위 이벤트가 필요하다(현재는 집계 카운터). 세션 이벤트 스트림(Kinesis) 설계 필요.
 - **역마진 서킷 브레이커 자동 실행**: 알림까지 구현. SNS → Lambda → 기능 플래그(쿠폰 발급 제한) 연결은 앱 측 플래그 시스템 확정 후.
-- **z-score 계절성**: 1일 창 기준. 요일 패턴이 강하면 `offset 1w` 비교로 교체.
+- **이상 감지 기준선**: 지난주 같은 시간 1시간 평균 하나만 본다. 지난주에 장애나 공휴일이 끼면 기준이 틀어지므로, 운영 데이터가 쌓이면 최근 N주 중앙값으로 바꾼다.
 - **AMP 보존 기간 연장**이 필요하면 워크스페이스 retention 설정 또는 장기 집계 메트릭을 S3 로 내보내는 작업 추가.
