@@ -442,7 +442,7 @@
             "type": "prometheus",
             "uid": "${amp}"
           },
-          "expr": "sort_desc(namespace:idle_resource_score:ratio1d{cluster=\"$cluster\"})",
+          "expr": "sort_desc(namespace:idle_resource_score:ratio7d{cluster=\"$cluster\"})",
           "legendFormat": "__auto",
           "range": false,
           "instant": true,

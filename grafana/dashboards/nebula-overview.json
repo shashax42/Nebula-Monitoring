@@ -1253,7 +1253,7 @@
     },
     {
       "type": "table",
-      "title": "과소 사용 파드 (1일 평균 CPU/request < 10%) — 다운사이징 후보",
+      "title": "과소 사용 파드 (7일 p95 CPU/request < 10%) — 다운사이징 후보",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -1266,7 +1266,7 @@
             "type": "prometheus",
             "uid": "${amp}"
           },
-          "expr": "sort(pod:cpu_usage_vs_request:avg1d{cluster=\"$cluster\"} < 0.1)",
+          "expr": "sort(pod:cpu_usage_vs_request:p95_7d{cluster=\"$cluster\"} < 0.1)",
           "legendFormat": "__auto",
           "range": false,
           "instant": true,
@@ -1289,7 +1289,7 @@
         "showHeader": true,
         "sortBy": [
           {
-            "displayName": "CPU/request (1d)",
+            "displayName": "CPU/request (7d p95)",
             "desc": true
           }
         ]
@@ -1310,7 +1310,7 @@
               "otel_scope_schema_url": true
             },
             "renameByName": {
-              "Value": "CPU/request (1d)",
+              "Value": "CPU/request (7d p95)",
               "namespace": "네임스페이스",
               "pod": "파드"
             }
