@@ -1,94 +1,101 @@
-# Predictive & Efficiency: 이상 감지(z-score) + 유휴 리소스 점수
-#   z-score = (현재값 - 최근 1일 평균) / 최근 1일 표준편차.  |z| > 3 이면 평소 분포에서 벗어난 값.
-#   주의: 1일 창은 요일/계절성을 반영하지 못한다. 트래픽 패턴이 요일별로 크게 다르면
-#         `offset 1w` 기준 비교로 바꾼다 (docs/OBSERVABILITY_DATA_PIPELINE.md 6장).
+# Predictive & Efficiency: 이상 감지(지난주 같은 시간 대비) + 유휴 리소스 점수
+#
+# 이상 감지: "평소"를 최근 1일 평균으로 잡으면(z-score) 하루 주기·요일 차이·계획된 프로모션에도 울린다.
+#   그래서 기준을 "지난주 같은 시간대 1시간 평균"으로 잡는다. 하루·요일 패턴이 기준에 이미 들어 있다.
+#   - 비율 = 지금 5분 값 / 지난주 같은 시간 1시간 평균
+#   - 1주 데이터가 쌓이기 전에는 기준이 없어 울리지 않는다 (의도된 동작)
+#   - 지난주 그 시간에 장애가 있었다면 기준이 오염된다 → 장애 대응의 1차 근거는 SLO 번레이트(02-service-slo)이고
+#     이 파일의 알림은 info/warning 참고 신호다. 오토스케일링(HPA)은 이 값을 쓰지 않는다.
+#
+# 유휴 점수: requests 대비 사용률의 "7일 p95" 기준. 평균으로 판단하면 피크 시간에 CPU 제한에 걸리는 크기로 줄이라고
+#   권하게 된다. HPA 는 파드 '개수'를 맞추고, 이 점수는 파드 하나의 '크기(requests)'가 과한지를 본다.
 groups:
   - name: nebula.anomaly.recording
     interval: 1m
     rules:
-      - record: service:requests:zscore1d
-        expr: |
-          (service:requests:rate5m - avg_over_time(service:requests:rate5m[1d]))
-          / (stddev_over_time(service:requests:rate5m[1d]) > 0)
-      - record: service:error_ratio:zscore1d
-        expr: |
-          (service:error_ratio:rate5m - avg_over_time(service:error_ratio:rate5m[1d]))
-          / (stddev_over_time(service:error_ratio:rate5m[1d]) > 0)
-      - record: cluster:cpu_utilization:zscore1d
-        expr: |
-          (cluster:cpu_utilization:ratio - avg_over_time(cluster:cpu_utilization:ratio[1d]))
-          / (stddev_over_time(cluster:cpu_utilization:ratio[1d]) > 0)
+      - record: service:requests:rate5m_last_week_1h
+        expr: avg_over_time(service:requests:rate5m[1h] offset 1w)
+      - record: service:requests:ratio_vs_last_week
+        expr: service:requests:rate5m / (service:requests:rate5m_last_week_1h > 0)
+      - record: service:error_ratio:rate5m_last_week_1h
+        expr: avg_over_time(service:error_ratio:rate5m[1h] offset 1w)
       - record: service:log_records:rate5m
         expr: sum by (cluster, service, level) (rate(nebula_log_records_total[5m]))
-      - record: service:error_logs:zscore1d
-        expr: |
-          (
-            sum by (cluster, service) (service:log_records:rate5m{level=~"ERROR|FATAL"})
-            - avg_over_time(sum by (cluster, service) (service:log_records:rate5m{level=~"ERROR|FATAL"})[1d:5m])
-          )
-          / (stddev_over_time(sum by (cluster, service) (service:log_records:rate5m{level=~"ERROR|FATAL"})[1d:5m]) > 0)
+      - record: service:error_logs:rate5m
+        expr: sum by (cluster, service) (service:log_records:rate5m{level=~"ERROR|FATAL"})
+      - record: service:error_logs:rate5m_last_week_1h
+        expr: avg_over_time(service:error_logs:rate5m[1h] offset 1w)
 
-  # 유휴 리소스 점수 (0=완전 활용, 1=전부 유휴). requests 대비 1일 평균 사용률 기반
+  # 유휴 리소스 점수 (0=피크에 requests 를 다 씀, 1=피크에도 전혀 안 씀). 7일 p95 사용률 기반
   - name: nebula.efficiency.recording
-    interval: 5m
+    interval: 30m
     rules:
-      - record: namespace:idle_resource_score:ratio1d
+      - record: namespace:cpu_usage_vs_request:p95_7d
+        expr: quantile_over_time(0.95, namespace:cpu_usage_vs_request:ratio[7d:5m])
+      - record: namespace:memory_usage_vs_request:p95_7d
+        expr: quantile_over_time(0.95, namespace:memory_usage_vs_request:ratio[7d:5m])
+      - record: namespace:idle_resource_score:ratio7d
         expr: |
           clamp(
-            1 - (
-              avg_over_time(namespace:cpu_usage_vs_request:ratio[1d])
-              + avg_over_time(namespace:memory_usage_vs_request:ratio[1d])
-            ) / 2,
+            1 - (namespace:cpu_usage_vs_request:p95_7d + on (cluster, namespace) namespace:memory_usage_vs_request:p95_7d) / 2,
             0, 1
           )
-      - record: pod:cpu_usage_vs_request:avg1d
-        expr: avg_over_time(pod:cpu_usage_vs_request:ratio[1d])
+      - record: pod:cpu_usage_vs_request:p95_7d
+        expr: quantile_over_time(0.95, pod:cpu_usage_vs_request:ratio[7d:5m])
 
   - name: nebula.anomaly.alerts
     rules:
+      # 지난주 같은 시간의 3배 이상 또는 1/3 이하 (프로모션 공지가 있었으면 무시해도 되는 참고 신호)
       - alert: TrafficAnomaly
-        expr: abs(service:requests:zscore1d) > 3 and service:requests:rate5m > 1
+        expr: |
+          (service:requests:ratio_vs_last_week > 3 or service:requests:ratio_vs_last_week < 0.33)
+          and on (cluster, environment, service_name) service:requests:rate5m_last_week_1h > 1
         for: 15m
         labels:
           severity: info
           team: service-owner
         annotations:
-          summary: "{{ $labels.service_name }} 트래픽 이상 (z={{ $value | humanize }})"
-          description: "급증(외부 유입/봇) 또는 급감(상위 장애/라우팅 문제) 가능성."
+          summary: "{{ $labels.service_name }} 트래픽이 지난주 같은 시간의 {{ $value | humanize }}배"
+          description: "급증(외부 유입/봇/프로모션) 또는 급감(상위 장애/라우팅 문제) 가능성."
           runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#trafficanomaly
 
+      # 에러율이 1% 를 넘고 지난주 같은 시간의 3배 + 0.5%p 이상
       - alert: ErrorRatioAnomaly
-        expr: service:error_ratio:zscore1d > 3 and service:error_ratio:rate5m > 0.01
+        expr: |
+          service:error_ratio:rate5m > 0.01
+          and on (cluster, environment, service_name)
+          service:error_ratio:rate5m > 3 * service:error_ratio:rate5m_last_week_1h + 0.005
         for: 10m
         labels:
           severity: warning
           team: service-owner
         annotations:
-          summary: "{{ $labels.service_name }} 에러율 이상 증가 (z={{ $value | humanize }})"
+          summary: "{{ $labels.service_name }} 에러율 {{ $value | humanizePercentage }} (지난주 같은 시간 대비 급증)"
           description: "배포 직후라면 롤백 판단 근거. service-order 는 Argo Rollouts 분석(nebula-gitops platform/aws/base/analysis-slo-canary.yaml)이 같은 신호로 자동 판정."
           runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#errorratioanomaly
 
       - alert: ErrorLogSpike
         expr: |
-          service:error_logs:zscore1d > 3
+          service:error_logs:rate5m > 0.2
           and on (cluster, service)
-          sum by (cluster, service) (service:log_records:rate5m{level=~"ERROR|FATAL"}) > 0.2
+          service:error_logs:rate5m > 3 * service:error_logs:rate5m_last_week_1h + 0.05
         for: 10m
         labels:
           severity: warning
           team: service-owner
         annotations:
-          summary: "{{ $labels.service }} 에러 로그 급증 (z={{ $value | humanize }})"
+          summary: "{{ $labels.service }} 에러 로그 {{ $value | humanize }}/s (지난주 같은 시간 대비 급증)"
           runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#errorlogspike
 
       - alert: IdleResourceHigh
         expr: |
-          namespace:idle_resource_score:ratio1d > 0.8
+          namespace:idle_resource_score:ratio7d > 0.8
           and on (cluster, namespace) namespace:cpu_requests:sum > 1
         for: 6h
         labels:
           severity: info
           team: platform
         annotations:
-          summary: "{{ $labels.namespace }} 유휴 점수 {{ $value | humanizePercentage }} — requests 다운사이징 후보"
+          summary: "{{ $labels.namespace }} 7일 p95 기준 유휴 점수 {{ $value | humanizePercentage }} — requests 다운사이징 후보"
+          description: "피크(p95)에도 requests 의 20% 미만만 쓴다. 줄일 때는 p95 사용량 + 여유분 기준으로."
           runbook_url: https://github.com/shashax42/Nebula-Monitoring/blob/main/docs/RUNBOOK.md#idleresourcehigh

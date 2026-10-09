@@ -270,9 +270,9 @@ def overview():
                      unit="percentunit", goal=0.8), 12, 8)
     L.add(timeseries("네임스페이스 메모리 사용률 (vs Limit)", [prom(f'namespace:memory_usage_vs_limit:ratio{{{C}}}', "{{namespace}}")],
                      unit="percentunit", goal=0.8), 12, 8)
-    L.add(table("과소 사용 파드 (1일 평균 CPU/request < 10%) — 다운사이징 후보",
-                f'sort(pod:cpu_usage_vs_request:avg1d{{{C}}} < 0.1)', unit="percentunit",
-                rename={"Value": "CPU/request (1d)", "namespace": "네임스페이스", "pod": "파드"}), 12, 8)
+    L.add(table("과소 사용 파드 (7일 p95 CPU/request < 10%) — 다운사이징 후보",
+                f'sort(pod:cpu_usage_vs_request:p95_7d{{{C}}} < 0.1)', unit="percentunit",
+                rename={"Value": "CPU/request (7d p95)", "namespace": "네임스페이스", "pod": "파드"}), 12, 8)
     L.add(table("과부하 파드 (CPU/limit > 80%) — 스케일업 후보",
                 f'sort_desc(pod:cpu_usage_vs_limit:ratio{{{C}}} > 0.8)', unit="percentunit",
                 rename={"Value": "CPU/limit", "namespace": "네임스페이스", "pod": "파드"},
@@ -500,7 +500,7 @@ def cost():
                      unit="currencyKRW", stack=True, desc="requests × 단가 (prometheus/rules/05-cost 의 단가 상수)"), 12, 8)
 
     L.row("Predictive & Efficiency — 유휴 리소스")
-    L.add(table("유휴 리소스 점수 (1 = 전부 유휴)", f'sort_desc(namespace:idle_resource_score:ratio1d{{{C}}})', unit="percentunit",
+    L.add(table("유휴 리소스 점수 (1 = 전부 유휴)", f'sort_desc(namespace:idle_resource_score:ratio7d{{{C}}})', unit="percentunit",
                 rename={"Value": "Idle score", "namespace": "네임스페이스"},
                 steps=thresholds((GREEN, None), (YELLOW, 0.5), (RED, 0.8))), 12, 9)
     L.add(table("유휴로 낭비되는 비용 (₩/h)", f'sort_desc(namespace:idle_cost_krw:rate1h{{{C}}})', unit="currencyKRW",
