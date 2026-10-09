@@ -76,10 +76,10 @@ batch-order 잡의 마지막 성공이 30분을 넘음 (스케줄은 2분·5분 
 - 조치: 원인이 된 단계를 고치고, 자동 취소된 주문에 대한 고객 안내·재고 정합성 확인.
 
 ## TrafficAnomaly
-요청률 z-score |z| > 3 (최근 1일 대비). info — 급증은 외부 유입/봇, 급감은 상위 장애/라우팅 문제 가능성.
+요청률이 지난주 같은 시간(1시간 평균)의 3배 이상 또는 1/3 이하. info — 급증은 외부 유입/봇/프로모션, 급감은 상위 장애/라우팅 문제 가능성. 1주 데이터가 쌓이기 전에는 울리지 않는다.
 
 ## ErrorRatioAnomaly
-에러율 z-score > 3 이고 1% 초과. 배포 직후라면 롤백 판단 근거 (nebula-gitops `platform/aws/base/analysis-slo-canary.yaml` 의 canary 판정과 같은 신호 (`CanaryRollback`)).
+에러율이 1% 를 넘고 지난주 같은 시간의 3배 + 0.5%p 이상. 배포 직후라면 롤백 판단 근거 (nebula-gitops `platform/aws/base/analysis-slo-canary.yaml` 의 canary 판정과 같은 신호 (`CanaryRollback`)).
 
 ## CanaryRollback
 알림이 아니라 Argo Rollouts 의 자동 판단. service-order 롤아웃이 `nebula-slo-canary` 분석(AMP, canary vs stable)에서 실패하면 canary 를 내리고 stable 로 되돌린다.
@@ -93,10 +93,10 @@ CloudWatch `<env>-aurora-<cluster>-deadlocks`. 동시 주문이 같은 상품 �
 - 조치: 재고 차감 쿼리의 잠금 순서·범위 점검(조건부 UPDATE), 핫 상품은 재고 분할 검토.
 
 ## ErrorLogSpike
-서비스 ERROR/FATAL 로그 z-score > 3. 저장 쿼리 `02-top-error-messages` 로 새로 생긴 에러 시그니처 확인.
+서비스 ERROR/FATAL 로그가 초당 0.2건을 넘고 지난주 같은 시간의 3배 이상. 저장 쿼리 `02-top-error-messages` 로 새로 생긴 에러 시그니처 확인.
 
 ## IdleResourceHigh
-네임스페이스 requests 대비 1일 평균 사용률이 20% 미만 (유휴 점수 > 0.8). 다운사이징 후보 — `Overview` Q4 표에서 파드 단위 확인.
+네임스페이스 requests 대비 **7일 p95** 사용률이 20% 미만 (유휴 점수 > 0.8). 피크에도 거의 안 쓴다는 뜻이라 다운사이징 후보 — `Overview` Q4 표에서 파드 단위 확인. 줄일 때는 p95 사용량에 여유분을 더한 값으로. 평균으로 줄이면 피크에 CPU 제한에 걸린다.
 
 ## KubeNodeNotReady
 노드 Ready=false 5분 이상. `kubectl describe node`, EC2 상태 검사, kubelet 로그. ASG 가 교체하지 않으면 수동 cordon/drain.
