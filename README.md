@@ -6,7 +6,6 @@ OpenTelemetry + AWS 관리형 서비스(AMP · AMG · CloudWatch · X-Ray)로 �
 - 설계 문서: [docs/OBSERVABILITY_DATA_PIPELINE.md](docs/OBSERVABILITY_DATA_PIPELINE.md) — 질문 → 데이터 → 정제 → 가공 → 판단
 - 앱 계측 규약: [docs/TELEMETRY_CONTRACT.md](docs/TELEMETRY_CONTRACT.md)
 - 알림 대응: [docs/RUNBOOK.md](docs/RUNBOOK.md)
-- 무엇을 기본으로 두고 무엇을 확장으로 뺐는지: [docs/adr/0001-core-vs-extension-telemetry.md](docs/adr/0001-core-vs-extension-telemetry.md)
 - 모니터링 비용 산정: [docs/COST_ESTIMATE.md](docs/COST_ESTIMATE.md)
 
 ## 연결된 레포

@@ -1,7 +1,7 @@
 # 모니터링 비용 산정 (템플릿)
 
 이 문서는 **계산 방법과 측정 쿼리**만 담는다. 숫자는 실제 환경에서 측정한 값과 그 시점의 AWS 요금표로 채운다.
-추정치를 근거 없이 적지 않는다 — 이력서·보고서에 비용 수치를 쓸 때는 아래 "측정" 열의 결과와 측정 기간을 함께 남긴다.
+
 
 요금표: [AMP](https://aws.amazon.com/prometheus/pricing/) · [CloudWatch](https://aws.amazon.com/cloudwatch/pricing/) ·
 [X-Ray](https://aws.amazon.com/xray/pricing/) · [AMG](https://aws.amazon.com/grafana/pricing/) · [S3](https://aws.amazon.com/s3/pricing/) ·
